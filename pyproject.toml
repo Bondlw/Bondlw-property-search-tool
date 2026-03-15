@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "property-search"
+version = "0.1.0"
+description = "UK property search tool with scraping, filtering, and daily reporting"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "playwright>=1.40",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "click>=8.1",
+    "plyer>=2.1",
+]
+
+[project.scripts]
+property-search = "src.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

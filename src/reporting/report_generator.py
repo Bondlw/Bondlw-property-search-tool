@@ -1,0 +1,573 @@
+"""HTML report generator using Jinja2 templates."""
+
+import json
+import logging
+import math
+from datetime import date, datetime
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader
+
+from ..filtering.hard_gates import check_all_gates
+from ..filtering.scoring import score_property
+from ..utils.financial_calculator import FinancialCalculator
+
+logger = logging.getLogger(__name__)
+
+
+class ReportGenerator:
+    """Generate HTML reports from property data."""
+
+    @staticmethod
+    def _json_parse(value):
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return [value] if value else []
+        return []
+
+    def __init__(self, config: dict):
+        self.config = config
+        template_dir = Path(__file__).parent.parent.parent / "templates"
+        self.env = Environment(
+            loader=FileSystemLoader(str(template_dir)),
+            autoescape=True,
+        )
+        self.env.filters["currency"] = lambda v: f"£{v:,.0f}" if v else "N/A"
+        self.env.filters["json_parse"] = self._json_parse
+        # Pre-build area lookup list (name, lat, lng)
+        self._area_list = [
+            (a["name"], a["lat"], a["lng"])
+            for group in self.config.get("search_areas", {}).values()
+            for a in group
+            if a.get("lat") and a.get("lng")
+        ]
+
+    def _nearest_area(self, lat: float, lng: float) -> tuple[str, float]:
+        """Return (name, distance_miles) of the nearest configured search area."""
+        best_name, best_dist = "Unknown", float("inf")
+        for name, a_lat, a_lng in self._area_list:
+            dlat = math.radians(a_lat - lat)
+            dlng = math.radians(a_lng - lng)
+            a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat)) * math.cos(math.radians(a_lat)) * math.sin(dlng / 2) ** 2
+            dist = 2 * math.asin(math.sqrt(a))
+            if dist < best_dist:
+                best_dist, best_name = dist, name
+        # Convert radians distance to miles (Earth radius ~3959 mi)
+        best_miles = best_dist * 3959
+        return best_name, best_miles
+
+        # Exposed after generate() for use by caller
+        self.last_qualifying: list[dict] = []
+        self.last_new_today: list[dict] = []
+        self.last_near_misses: list[dict] = []
+
+    def generate(self, properties: list[dict], output_path: str, enrichment_map: dict | None = None,
+                 favourite_ids: set[int] | None = None, excluded_ids: set[int] | None = None,
+                 price_history_map: dict | None = None) -> str:
+        """Generate a full daily report. Returns the output file path.
+
+        enrichment_map: optional {property_id: enrichment_dict} to feed into gates.
+        favourite_ids: set of property IDs that are favourited.
+        excluded_ids: set of property IDs that are excluded.
+        """
+        today = date.today().isoformat()
+        calc = FinancialCalculator(self.config)
+        fav_ids = favourite_ids or set()
+        excl_ids = excluded_ids or set()
+
+        qualifying = []
+        near_misses = []
+        rejected = []
+        new_today = []
+        stretch = []
+        negotiation = []
+        favourites = []
+        radius_filtered_count = 0
+        in_radius_props = []
+
+        for prop in properties:
+            prop_id = prop["id"]
+            prop["_is_favourite"] = prop_id in fav_ids
+            prop["_is_excluded"] = prop_id in excl_ids
+            prop["_is_new"] = prop.get("first_seen_date") == today
+            prop["_is_reduced"] = bool(prop.get("price_reduced"))
+            prop["_price_history"] = (price_history_map or {}).get(prop_id, [])
+
+            # Build police.uk crime link from postcode
+            postcode = (prop.get("postcode") or "").replace(" ", "")
+            prop["_crime_link"] = f"https://www.police.uk/pu/your-area/?q={postcode}" if postcode else None
+
+            # Parse floor plans, video, brochure, rooms from DB
+            fp_raw = prop.get("floorplan_urls")
+            prop["_floor_plans"] = json.loads(fp_raw) if fp_raw else []
+            prop["_video_url"] = prop.get("video_url")
+            prop["_brochure_url"] = prop.get("brochure_url")
+            rooms_raw = prop.get("rooms")
+            prop["_rooms"] = json.loads(rooms_raw) if rooms_raw else []
+
+            enrichment = (enrichment_map or {}).get(prop_id) or prop.get("_enrichment")
+            passed, gate_results = check_all_gates(prop, enrichment, self.config)
+
+            failed_gates = [g for g in gate_results if not g.passed]
+            passed_gates = [g for g in gate_results if g.passed]
+
+            prop["_gate_results"] = gate_results
+            prop["_failed_gates"] = failed_gates
+            prop["_passed_gates"] = passed_gates
+            prop["_gates_passed"] = passed
+            prop["_failed_count"] = len(failed_gates)
+
+            # Financial data for every property
+            prop["_costs"] = calc.calculate_full_monthly_cost(prop)
+
+            # Crime total from enrichment (for display on every card)
+            if enrichment:
+                crime = enrichment.get("crime_summary")
+                if isinstance(crime, str):
+                    try:
+                        crime = json.loads(crime)
+                    except (json.JSONDecodeError, TypeError):
+                        crime = None
+                if isinstance(crime, dict):
+                    prop["_crime_total"] = sum(int(v) for v in crime.values() if str(v).isdigit())
+                else:
+                    prop["_crime_total"] = None
+            else:
+                prop["_crime_total"] = None
+
+            # Enrichment: transport, location, sold prices
+            if enrichment:
+                prop["_nearest_station"] = enrichment.get("nearest_station_name")
+                prop["_station_walk_min"] = enrichment.get("nearest_station_walk_min")
+                prop["_commute_london_min"] = enrichment.get("commute_to_london_min")
+                prop["_commute_maidstone_min"] = enrichment.get("commute_to_maidstone_min")
+                prop["_annual_season_ticket"] = enrichment.get("annual_season_ticket")
+                prop["_flood_zone"] = enrichment.get("flood_zone")
+                prop["_broadband_speed"] = enrichment.get("broadband_speed_mbps")
+                prop["_supermarket_name"] = enrichment.get("nearest_supermarket_name")
+                prop["_supermarket_walk_min"] = enrichment.get("nearest_supermarket_walk_min")
+                prop["_avg_sold_price"] = enrichment.get("avg_sold_price_nearby")
+
+            # Coordinates for map view (from base property, not enrichment)
+            prop["_latitude"] = prop.get("latitude")
+            prop["_longitude"] = prop.get("longitude")
+
+            # Nearest search area (for area filter) + max-radius skip
+            lat = prop.get("latitude")
+            lng = prop.get("longitude")
+            if lat and lng:
+                area_name, area_dist = self._nearest_area(lat, lng)
+                prop["_search_area"] = area_name
+                max_radius = self.config.get("max_radius_miles", 10)
+                if area_dist > max_radius:
+                    continue
+            else:
+                prop["_search_area"] = "Unknown"
+
+            radius_filtered_count += 1
+            in_radius_props.append(prop)
+
+            # Skip properties with addresses in excluded locations
+            excluded_locations = self.config.get("excluded_address_terms", [])
+            addr_lower = (prop.get("address") or prop.get("title") or "").lower()
+            if any(term.lower() in addr_lower for term in excluded_locations):
+                continue
+
+            # Skip excluded from all classification sections
+            if prop["_is_excluded"]:
+                continue
+
+            # Score every non-excluded property (needed for card display, including favourites)
+            if passed:
+                prop["_scores"] = score_property(prop, enrichment, self.config)
+            else:
+                prop["_scores"] = None
+
+            # Days on market and negotiation (needed for all cards)
+            days = self._days_on_market(prop)
+            prop["_days_on_market"] = days
+            prop["_negotiation"] = calc.calculate_negotiation_analysis(prop, days)
+
+            # Recommended offer based on price history + days on market
+            prop["_recommended_offer"] = self._compute_recommended_offer(prop, days, calc)
+
+            # Deposit recommendation for this property
+            prop["_deposit_rec"] = self._compute_deposit_recommendation(prop, calc)
+
+            # New today
+            if prop.get("first_seen_date") == today:
+                new_today.append(prop)
+
+            # Track favourites — shown in their own section only (prevents duplicate card IDs)
+            if prop["_is_favourite"]:
+                favourites.append(prop)
+                continue
+
+            # Categorise non-favourited properties
+            if passed:
+                qualifying.append(prop)
+            else:
+                neg_check = prop.get("_negotiation")
+                offer_qualifies = neg_check and neg_check.get("would_qualify")
+                asking_rating = (prop.get("_costs") or {}).get("affordability_rating", "red")
+                if len(failed_gates) <= 2 and offer_qualifies and asking_rating != "red":
+                    near_misses.append(prop)
+                else:
+                    rejected.append(prop)
+
+            # Stretch opportunities — only include if a negotiated offer would bring into budget
+            # and asking price is amber (not deeply red)
+            if not passed:
+                monthly = prop["_costs"]["total_monthly"]
+                monthly_max = self.config.get("monthly_target", {}).get("max", 928)
+                stretch_ceiling = calc.take_home * 0.40
+                neg = prop.get("_negotiation")
+                offer_qualifies = neg and neg.get("would_qualify")
+                asking_rating = (prop.get("_costs") or {}).get("affordability_rating", "red")
+                if days and days >= 60 and monthly_max < monthly <= stretch_ceiling and offer_qualifies and asking_rating != "red":
+                    over_pct_monthly = round(((monthly - monthly_max) / monthly_max) * 100, 1)
+                    prop["_over_budget_pct"] = over_pct_monthly
+                    prop["_stretch_monthly"] = round(monthly, 0)
+                    stretch.append(prop)
+
+            # Negotiation targets — only include if:
+            # 1. The negotiated offer would qualify (neg["would_qualify"] == True), AND
+            # 2. The only gates that fail are price/affordability (price_cap, monthly_cost).
+            # Properties failing lease, SC, CT, crime etc. go to rejected/near-miss only.
+            neg = prop["_negotiation"]
+            affordability_gates = {"price_cap", "monthly_cost"}
+            non_affordability_fails = [g for g in failed_gates if g.gate_name not in affordability_gates]
+            is_negotiation_candidate = (
+                neg
+                and neg["would_qualify"]
+                and not passed
+                and len(non_affordability_fails) == 0
+            )
+            if passed or is_negotiation_candidate:
+                if days and days >= 30:
+                    negotiation.append(prop)
+
+        # Sort sections: new items first, then by score/failed count
+        qualifying.sort(key=lambda p: (not p.get("_is_new"), -(p.get("_scores") or {}).get("total", 0)))
+        stretch.sort(key=lambda p: (not p.get("_is_new"), p.get("_stretch_monthly", 9999)))
+
+        # Deduplicate negotiation list
+        seen_ids = set()
+        unique_negotiation = []
+        for p in negotiation:
+            if p["id"] not in seen_ids:
+                seen_ids.add(p["id"])
+                unique_negotiation.append(p)
+
+        # Merge stretch + negotiation into "Opportunities"
+        opp_ids = set()
+        opportunities = []
+        for p in unique_negotiation:
+            opp_ids.add(p["id"])
+            p["_opp_type"] = "negotiation"
+            opportunities.append(p)
+        for p in stretch:
+            if p["id"] not in opp_ids:
+                opp_ids.add(p["id"])
+                p["_opp_type"] = "stretch"
+                opportunities.append(p)
+        opportunities.sort(key=lambda p: (
+            not p.get("_is_new"),
+            0 if p.get("_opp_type") == "negotiation" else 1,
+            p.get("_stretch_monthly", 9999),
+        ))
+
+        # Remove from near_misses any property that already appears in opportunities
+        near_misses = [p for p in near_misses if p["id"] not in opp_ids]
+
+        # Near misses: sort by severity — minor/liveable failures first
+        # Gates ranked by how "liveable" the failure is (lower = more liveable)
+        gate_severity = {
+            "monthly_cost": 1,       # slightly over GREEN — very liveable
+            "epc_rating": 2,         # can improve; bills slightly higher
+            "council_tax_band": 2,   # one band over is manageable
+            "station_walkable": 3,   # few min extra walk
+            "supermarket_walkable": 3,
+            "no_tbc_fields": 3,      # unknown data, might be fine
+            "price_cap": 4,          # over budget but negotiable
+            "service_charge": 4,
+            "ground_rent": 4,
+            "lease_length": 7,       # expensive to fix
+            "crime_safety": 7,       # safety concern
+            "flood_risk": 8,         # insurance/structural
+            "not_retirement": 9,     # age restriction
+            "not_auction": 9,
+            "move_in_ready": 9,      # renovation project
+            "not_non_standard": 9,
+            "no_doubling_clause": 9,
+        }
+        for p in near_misses:
+            failed = p.get("_failed_gates", [])
+            # Worst severity among failed gates
+            worst = max((gate_severity.get(g.gate_name, 5) for g in failed), default=5)
+            # Average severity
+            avg = sum(gate_severity.get(g.gate_name, 5) for g in failed) / max(len(failed), 1)
+            p["_severity_worst"] = worst
+            p["_severity_avg"] = avg
+        near_misses.sort(key=lambda p: (
+            not p.get("_is_new"),
+            p.get("_severity_worst", 5),
+            p.get("_severity_avg", 5),
+            p.get("_failed_count", 99),
+        ))
+
+        # Area stats (only radius-filtered properties)
+        area_stats = self._compute_area_stats(in_radius_props, qualifying)
+
+        # First-import detection
+        is_first_import = len(new_today) > 50 and (len(new_today) / max(radius_filtered_count, 1)) > 0.8
+
+        # Stretch impact reference table
+        stretch_impact = calc.calculate_stretch_impact()
+
+        template = self.env.get_template("daily_report.html")
+        html = template.render(
+            report_date=today,
+            generated_at=datetime.now().strftime("%A %d %B %Y at %H:%M"),
+            total_properties=radius_filtered_count,
+            qualifying_count=len(qualifying),
+            new_today_count=len(new_today),
+            near_miss_count=len(near_misses),
+            qualifying=qualifying,
+            new_today=new_today[:20] if is_first_import else new_today,
+            near_misses=near_misses,
+            opportunities=opportunities,
+            favourites=favourites,
+            area_stats=area_stats,
+            config=self.config,
+            is_first_import=is_first_import,
+            stretch_impact=stretch_impact,
+        )
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text(html, encoding="utf-8")
+        logger.info(f"Report generated: {output_path}")
+
+        # Expose for caller (e.g. notifications)
+        self.last_qualifying = qualifying
+        self.last_new_today = new_today
+        self.last_near_misses = near_misses
+
+        return output_path
+
+    def _days_on_market(self, prop: dict) -> int | None:
+        first = prop.get("first_listed_date") or prop.get("first_seen_date")
+        if not first:
+            return None
+        try:
+            dt = datetime.strptime(first[:10], "%Y-%m-%d").date()
+            return (date.today() - dt).days
+        except (ValueError, TypeError):
+            return None
+
+    def _get_budget_max(self, prop: dict) -> int | None:
+        tenure = (prop.get("tenure") or "").lower()
+        budget = self.config.get("budget", {})
+        if tenure == "freehold":
+            return budget.get("freehold", {}).get("absolute_max", 200000)
+        if tenure in ("leasehold", "share_of_freehold"):
+            return budget.get("leasehold", {}).get("absolute_max", 180000)
+        return None
+
+    def _compute_recommended_offer(self, prop: dict, days: int | None, calc) -> dict | None:
+        """Compute a recommended offer price based on price history and days on market.
+
+        Strategy:
+        - Base discount from days on market (5-10%)
+        - Extra discount if price has already been reduced (seller motivated)
+        - Offer floored at total reduction seen so far (match their trajectory)
+        - All-in monthly at the offer price for affordability check
+        """
+        price = prop.get("price", 0)
+        if not price:
+            return None
+
+        history = prop.get("_price_history", [])
+
+        # Calculate total reduction from original asking price
+        original_price = price
+        total_reduction = 0
+        total_reduction_pct = 0.0
+        reductions_count = 0
+
+        if history:
+            original_price = history[0].get("price", price) if isinstance(history[0], dict) else price
+            for entry in history:
+                change = entry.get("change_amount", 0) if isinstance(entry, dict) else 0
+                if change and change < 0:
+                    reductions_count += 1
+            if original_price and original_price != price:
+                total_reduction = original_price - price
+                total_reduction_pct = round((total_reduction / original_price) * 100, 1)
+
+        # Base discount from days on market
+        if days and days >= 90:
+            dom_discount_pct = 10
+        elif days and days >= 60:
+            dom_discount_pct = 8
+        elif days and days >= 30:
+            dom_discount_pct = 5
+        else:
+            dom_discount_pct = 3  # Even new listings: always room to negotiate
+
+        # If already reduced, seller is motivated — push further
+        if reductions_count >= 2:
+            extra_pct = 3  # Multiple reductions = very motivated
+        elif reductions_count == 1:
+            extra_pct = 2
+        else:
+            extra_pct = 0
+
+        # Total suggested discount (from current price, not original)
+        suggested_discount_pct = dom_discount_pct + extra_pct
+
+        # Calculate offer
+        offer_price = round(price * (1 - suggested_discount_pct / 100) / 1000) * 1000
+
+        # Calculate all-in at offer price
+        offer_prop = {**prop, "price": offer_price}
+        offer_costs = calc.calculate_full_monthly_cost(offer_prop)
+
+        reasoning = []
+        reasoning.append(f"{dom_discount_pct}% for {days or 0}d on market")
+        if extra_pct:
+            reasoning.append(f"+{extra_pct}% ({reductions_count} price cut{'s' if reductions_count > 1 else ''})")
+        if total_reduction > 0:
+            reasoning.append(f"Already down £{total_reduction:,} ({total_reduction_pct}%) from £{original_price:,}")
+
+        return {
+            "offer_price": offer_price,
+            "discount_pct": suggested_discount_pct,
+            "saving": price - offer_price,
+            "offer_all_in_monthly": offer_costs["total_all_in_monthly"],
+            "offer_affordability": offer_costs["affordability_rating"],
+            "original_price": original_price if original_price != price else None,
+            "total_reduction": total_reduction,
+            "total_reduction_pct": total_reduction_pct,
+            "reductions_count": reductions_count,
+            "reasoning": reasoning,
+        }
+
+    def _compute_deposit_recommendation(self, prop: dict, calc) -> dict:
+        """Compute recommended deposit for a property.
+
+        Strategy: find the deposit that keeps all-in monthly at/below GREEN ceiling.
+        If GREEN isn't possible, try AMBER. Show emergency fund remaining.
+        """
+        price = prop.get("price", 0)
+        if not price:
+            return {"deposit": calc.deposit, "emergency_fund": 0, "rating": "red"}
+
+        total_savings = self.config["user"].get("total_savings", calc.deposit)
+        emergency_target = self.config["user"].get("emergency_fund_target", 5000)
+        bills = self.config.get("estimated_bills", {}).get("total_monthly", 211)
+        green_ceiling = calc.monthly_target_min + bills
+        amber_ceiling = calc.monthly_target_max + bills
+
+        # Try deposits from minimum (keeping max emergency fund) to full savings
+        # in £500 steps to find the sweet spot
+        best = None
+        for dep in range(emergency_target, total_savings + 1, 500):
+            test_deposit = total_savings - dep  # dep is what we keep back
+            if test_deposit < 0:
+                continue
+            principal = price - test_deposit
+            if principal <= 0:
+                all_in = bills + self._get_non_mortgage_monthly(prop)
+            else:
+                r = calc.rate / 12
+                n = calc.term_years * 12
+                if r == 0:
+                    mortgage = principal / n
+                else:
+                    mortgage = principal * (r * (1 + r) ** n) / ((1 + r) ** n - 1)
+                sc = (prop.get("service_charge_pa") or 0) / 12
+                gr = (prop.get("ground_rent_pa") or 0) / 12
+                ct = calc._get_ct_monthly(prop)[0]
+                all_in = mortgage + sc + gr + ct + bills
+
+            rating = "green" if all_in <= green_ceiling else ("amber" if all_in <= amber_ceiling else "red")
+            entry = {
+                "deposit": test_deposit,
+                "emergency_fund": total_savings - test_deposit,
+                "all_in": round(all_in, 0),
+                "rating": rating,
+            }
+            if rating == "green":
+                best = entry
+                break  # found the minimum deposit that's GREEN
+            if rating == "amber" and not best:
+                best = entry
+
+        # Fallback: full deposit
+        if not best:
+            best = {
+                "deposit": total_savings,
+                "emergency_fund": 0,
+                "all_in": round(prop["_costs"]["total_all_in_monthly"], 0),
+                "rating": prop["_costs"]["affordability_rating"],
+            }
+
+        return best
+
+    @staticmethod
+    def _get_non_mortgage_monthly(prop: dict) -> float:
+        sc = (prop.get("service_charge_pa") or 0) / 12
+        gr = (prop.get("ground_rent_pa") or 0) / 12
+        return sc + gr
+
+    def _compute_area_stats(self, all_props: list, qualifying: list) -> list[dict]:
+        """Compute per-area statistics grouped by configured search area."""
+        areas = {}
+        for prop in all_props:
+            area = prop.get("_search_area", "Unknown")
+            if area == "Unknown":
+                continue
+            if area not in areas:
+                areas[area] = {
+                    "area": area, "total": 0, "qualifying": 0,
+                    "prices": [], "crime_totals": [], "days_listed": [],
+                }
+            areas[area]["total"] += 1
+            areas[area]["prices"].append(prop.get("price", 0))
+
+            # Crime total
+            crime_total = prop.get("_crime_total")
+            if crime_total is not None:
+                areas[area]["crime_totals"].append(crime_total)
+
+            # Days on market
+            dom = prop.get("_days_on_market")
+            if dom is not None:
+                areas[area]["days_listed"].append(dom)
+
+        for prop in qualifying:
+            area = prop.get("_search_area", "Unknown")
+            if area in areas:
+                areas[area]["qualifying"] += 1
+
+        stats = []
+        for area, data in sorted(areas.items(), key=lambda x: -x[1]["qualifying"]):
+            prices = [p for p in data["prices"] if p > 0]
+            crime = data["crime_totals"]
+            days = data["days_listed"]
+            stats.append({
+                "area": data["area"],
+                "total": data["total"],
+                "qualifying": data["qualifying"],
+                "avg_price": int(sum(prices) / len(prices)) if prices else 0,
+                "min_price": min(prices) if prices else 0,
+                "max_price": max(prices) if prices else 0,
+                "avg_crime": round(sum(crime) / len(crime), 1) if crime else None,
+                "avg_days_listed": round(sum(days) / len(days), 0) if days else None,
+            })
+        return stats

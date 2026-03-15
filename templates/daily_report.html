@@ -1,0 +1,2454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Property Report — {{ report_date }}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e1e4ed;
+    --muted: #8b8fa3;
+    --accent: #6c8cff;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --score-bg: #232736;
+    --nav-bg: #151822;
+    --fav: #f59e0b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+    padding: 16px;
+    max-width: 1920px;
+    margin: 0 auto;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* --- Financial profile bar --- */
+  .profile-bar {
+    display: flex; flex-wrap: wrap; gap: 6px 16px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 12px; font-size: 0.78rem; color: var(--muted);
+  }
+  .profile-bar span { white-space: nowrap; }
+  .profile-bar .val { color: var(--text); font-weight: 600; }
+
+  /* --- Summary stats --- */
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
+  .stat .value { font-size: 1.6rem; font-weight: 700; }
+  .stat .label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat.green .value { color: var(--green); }
+  .stat.amber .value { color: var(--amber); }
+
+  /* --- Sticky nav --- */
+  .nav {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--nav-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .nav a {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; font-weight: 500;
+    color: var(--muted); transition: background 0.15s;
+  }
+  .nav a:hover { background: var(--score-bg); color: var(--text); text-decoration: none; }
+  .nav .badge-count { background: var(--score-bg); padding: 1px 6px; border-radius: 10px; font-size: 0.68rem; font-weight: 600; }
+  .nav a.active { color: var(--accent); background: var(--score-bg); }
+
+  /* --- Collapsible sections --- */
+  details { margin-bottom: 16px; }
+  details > summary {
+    cursor: pointer; font-size: 1.1rem; font-weight: 600; padding: 8px 0;
+    border-bottom: 1px solid var(--border); list-style: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "\25B8"; transition: transform 0.15s; display: inline-block; }
+  details[open] > summary::before { transform: rotate(90deg); }
+  details > summary .count { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
+
+  /* --- Cards grid --- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; padding-top: 10px; }
+  .property-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; font-size: 0.78rem; position: relative;
+  }
+  .property-card.qualifying { border-left: 3px solid var(--green); }
+  .property-card.near-miss { border-left: 3px solid var(--amber); }
+  .property-card.stretch { border-left: 3px solid var(--accent); }
+  .property-card.negotiation { border-left: 3px solid var(--accent); }
+  .property-card.favourite { border-left: 3px solid var(--fav); }
+  .property-card.excluded { opacity: 0.4; }
+
+  /* --- Image carousel --- */
+  .carousel {
+    position: relative; width: 100%; height: 140px; border-radius: 6px;
+    overflow: hidden; margin-bottom: 6px; background: var(--score-bg);
+  }
+  .carousel-track {
+    display: flex; height: 100%; overflow-x: auto; scroll-snap-type: x mandatory;
+    scrollbar-width: none; -ms-overflow-style: none;
+  }
+  .carousel-track::-webkit-scrollbar { display: none; }
+  .carousel-track img {
+    flex: 0 0 100%; width: 100%; height: 100%; object-fit: cover;
+    scroll-snap-align: start;
+  }
+  .carousel-btn {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer;
+    width: 28px; height: 28px; border-radius: 50%; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 0.2s;
+  }
+  .carousel:hover .carousel-btn { opacity: 1; }
+  .carousel-btn.prev { left: 6px; }
+  .carousel-btn.next { right: 6px; }
+  .carousel-counter {
+    position: absolute; bottom: 4px; right: 6px;
+    background: rgba(0,0,0,0.6); color: #fff; padding: 1px 6px;
+    border-radius: 3px; font-size: 0.65rem;
+  }
+  .no-images { height: 60px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.75rem; }
+
+  /* Card header */
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2px; }
+  .card-header .price { font-size: 1.05rem; font-weight: 700; }
+  .card-header .score { background: var(--score-bg); padding: 2px 8px; border-radius: 5px; font-weight: 700; font-size: 0.82rem; }
+  .score.high { color: var(--green); }
+  .score.medium { color: var(--amber); }
+  .score.low { color: var(--red); }
+
+  .card-address { font-size: 0.75rem; color: var(--muted); margin-bottom: 3px; }
+  .card-address a { color: var(--muted); }
+  .card-address a:hover { color: var(--accent); }
+
+  /* Action buttons */
+  .card-actions {
+    display: flex; gap: 4px; margin-left: auto; padding-left: 8px; flex-shrink: 0;
+  }
+  .action-btn {
+    background: var(--score-bg); border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer; width: 26px; height: 26px;
+    border-radius: 4px; font-size: 13px; display: flex;
+    align-items: center; justify-content: center; transition: all 0.15s;
+  }
+  .action-btn:hover { background: var(--score-bg); color: var(--text); }
+  .action-btn.fav-active { color: var(--fav); background: rgba(245,158,11,0.15); border-color: var(--fav); }
+  .action-btn.excl-active { color: var(--red); background: rgba(248,113,113,0.15); border-color: var(--red); }
+
+  /* Tags row */
+  .card-meta { display: flex; gap: 3px; flex-wrap: wrap; margin-bottom: 4px; font-size: 0.68rem; }
+  .tag { background: var(--score-bg); padding: 1px 6px; border-radius: 3px; color: var(--muted); white-space: nowrap; }
+  .tag.tenure { color: var(--accent); } .tag.warn { color: var(--amber); }
+  .tag.bad { color: var(--red); } .tag.good { color: var(--green); }
+
+  /* Monthly cost bar */
+  .cost-bar {
+    background: var(--score-bg); border-radius: 5px;
+    margin-bottom: 4px; font-size: 0.75rem;
+  }
+  .cost-bar > summary {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 8px; cursor: pointer; list-style: none;
+  }
+  .cost-bar > summary::-webkit-details-marker { display: none; }
+  .cost-bar > summary::before { content: none; }
+  .cost-bar .total { font-weight: 700; font-size: 0.88rem; }
+  .cost-bar .pct { font-size: 0.72rem; }
+  .cost-bar .expand-hint { font-size: 0.65rem; color: var(--muted); margin-left: auto; }
+  .cost-bar.green .total, .cost-bar.green .pct { color: var(--green); }
+  .cost-bar.amber .total, .cost-bar.amber .pct { color: var(--amber); }
+  .cost-bar.red .total, .cost-bar.red .pct { color: var(--red); }
+  .cost-breakdown-full {
+    padding: 4px 8px 6px; font-size: 0.72rem; color: var(--muted);
+    border-top: 1px solid var(--border);
+  }
+  .cost-breakdown-full .cost-row { display: flex; justify-content: space-between; padding: 1px 0; }
+  .cost-breakdown-full .cost-total { color: var(--text); font-weight: 600; border-top: 1px solid var(--border); margin-top: 3px; padding-top: 3px; }
+  .cost-breakdown-full .cost-row-bills { color: var(--muted); }
+  .cost-breakdown-full .cost-row-bills-first { color: var(--muted); margin-top: 2px; }
+
+  /* Score breakdown with hover tooltips */
+  .score-breakdown { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; font-size: 0.75rem; margin-top: 6px; }
+  .score-item {
+    background: var(--score-bg); border-radius: 3px; padding: 4px 6px;
+    display: flex; justify-content: space-between; align-items: center;
+    position: relative; cursor: default;
+  }
+  .score-item .score-label { color: var(--muted); }
+  .score-item .score-val { font-weight: 600; color: var(--text); }
+  .score-tooltip {
+    display: none; position: absolute; bottom: calc(100% + 5px); left: 0;
+    background: #2a2d3a; border: 1px solid var(--border); border-radius: 5px;
+    padding: 7px 9px; font-size: 0.7rem; color: var(--text); z-index: 60;
+    white-space: normal; min-width: 210px; max-width: 290px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5); line-height: 1.4; pointer-events: none;
+  }
+  .score-item:hover .score-tooltip { display: block; }
+  .score-item:nth-child(3n) .score-tooltip { left: auto; right: 0; }
+
+  /* Pills */
+  .pill.pill-stretch { color: var(--accent); }
+
+  /* Crime + DOM pills */
+  .pills { display: flex; gap: 3px; flex-wrap: wrap; margin-bottom: 4px; }
+  .pill { font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; background: var(--score-bg); color: var(--muted); white-space: nowrap; }
+  .pill.crime-green { color: var(--green); } .pill.crime-amber { color: var(--amber); } .pill.crime-red { color: var(--red); }
+  .pill.dom-grey { color: var(--muted); } .pill.dom-amber { color: var(--amber); } .pill.dom-red { color: var(--red); }
+  .pill.walk-green { color: var(--green); } .pill.walk-amber { color: var(--amber); } .pill.walk-red { color: var(--red); }
+  .pill.flood-green { color: var(--green); } .pill.flood-amber { color: var(--amber); } .pill.flood-red { color: var(--red); }
+  .pill.broadband-good { color: var(--green); } .pill.broadband-ok { color: var(--amber); } .pill.broadband-poor { color: var(--red); }
+  .pill a { color: inherit; text-decoration: none; }
+  .pill a:hover { text-decoration: underline; }
+  .property-description { font-size: 0.75rem; color: var(--muted); line-height: 1.5; margin-top: 4px; }
+  .property-description summary { cursor: pointer; font-weight: 600; color: var(--text); font-size: 0.78rem; }
+  .property-description .desc-text { margin-top: 4px; max-height: 120px; overflow-y: auto; white-space: pre-line; }
+  .card-tracking { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+  .card-tracking select { font-size: 0.75rem; padding: 3px 6px; border-radius: 4px; border: 1px solid var(--border); background: var(--score-bg); color: var(--text); }
+  .card-tracking .tracking-label { font-size: 0.7rem; font-weight: 600; color: var(--muted); }
+  .card-notes textarea { width: 100%; min-height: 48px; max-height: 120px; resize: vertical; font-size: 0.75rem; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--score-bg); color: var(--text); font-family: inherit; }
+  .card-notes textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  .card-notes { margin: 6px 0; }
+  .card-notes .note-saved { font-size: 0.65rem; color: var(--green); opacity: 0; transition: opacity 0.3s; }
+  .card-footer .enquiry-btn { background: none; border: 1px solid var(--accent); color: var(--accent); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 0.72rem; font-weight: 600; }
+  .card-footer .enquiry-btn:hover { background: var(--accent); color: #fff; }
+  .card-notes .note-saved.show { opacity: 1; }
+  /* Table view */
+  .table-view { display: none; overflow-x: auto; margin: 12px 0; }
+  .table-view.active { display: block; }
+  .table-view table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+  .table-view th { background: var(--score-bg); text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); font-weight: 700; cursor: pointer; white-space: nowrap; position: sticky; top: 0; }
+  .table-view th:hover { background: var(--border); }
+  .table-view td { padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .table-view tr:hover { background: var(--score-bg); }
+  .table-view .score-cell { font-weight: 600; }
+  .table-view .score-cell.high { color: var(--green); } .table-view .score-cell.medium { color: var(--amber); } .table-view .score-cell.low { color: var(--red); }
+  .table-view a { color: var(--accent); }
+  body.view-table .cards { display: none; }
+  body.view-table .table-view { display: block; }
+
+  /* Map view */
+  #map-container { display: none; height: 70vh; margin: 12px 0; border-radius: 8px; border: 1px solid var(--border); z-index: 1; }
+  body.view-map #map-container { display: block; }
+  body.view-map .cards { display: none; }
+  body.view-map .table-view { display: none; }
+  .map-popup { font-size: 0.75rem; line-height: 1.4; max-width: 220px; }
+  .map-popup strong { display: block; margin-bottom: 4px; }
+  .map-popup .map-score { font-weight: 600; }
+  .map-popup a { color: var(--accent); }
+
+  /* Gate failures */
+  .gate-failures { margin-top: 4px; font-size: 0.7rem; }
+  .gate-fail { color: var(--red); margin-bottom: 1px; }
+  .gate-failures-banner { background: rgba(255,80,80,0.08); border: 1px solid rgba(255,80,80,0.25); border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
+  .gate-fail-top { color: var(--red); font-size: 0.75rem; margin-bottom: 2px; }
+
+  /* Today's Actions */
+  .todays-actions { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+  .action-item { display: block; font-size: 0.82rem; padding: 4px 0; cursor: pointer; }
+  .action-item.done { text-decoration: line-through; opacity: 0.5; }
+  .gate-pills { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+  .gate-pill { font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; background: #2a1a1a; color: var(--red); cursor: help; }
+
+  .features { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+
+  /* Card footer */
+  .card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 0.72rem; color: var(--muted); }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; margin-left: 4px; }
+  .badge.new { background: #1a3a2a; color: var(--green); cursor: pointer; -webkit-user-select: none; user-select: none; }
+  .badge.new:hover { opacity: 0.7; }
+  .badge.new.dismissed { display: none; }
+  .badge.reduced { background: #3a2a1a; color: var(--amber); }
+  .price-history { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
+  .price-history .reduction { color: var(--green); font-weight: 600; }
+  .badge.stale { background: #2a1a1a; color: var(--red); }
+  .badge.stretch-badge { background: #1a2a3a; color: var(--accent); }
+  .badge.section-label { font-size: 0.6rem; padding: 1px 4px; }
+  .badge.section-qualifying { background: #1a3a2a; color: var(--green); }
+  .badge.section-stretch { background: #1a2a3a; color: var(--accent); }
+  .badge.section-negotiation { background: #1a2a3a; color: var(--accent); }
+  .badge.section-near-miss { background: #3a2a1a; color: var(--amber); }
+  .badge.section-favourite { background: #3a2a0a; color: var(--fav); }
+
+  /* Area table */
+  .area-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 10px; }
+  .area-table th, .area-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  .area-table th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.5px; }
+  .area-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .empty-state { color: var(--muted); font-style: italic; padding: 16px; text-align: center; font-size: 0.85rem; }
+  .first-import-notice { background: #1a2a3a; border: 1px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 0.82rem; color: var(--accent); }
+  .nav-new-count { padding: 4px 10px; font-size: 0.75rem; color: var(--green); }
+  .stretch-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 8px; }
+  .stretch-table th, .stretch-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  .stretch-table th { color: var(--muted); font-size: 0.65rem; text-transform: uppercase; }
+  .stretch-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Toast notification */
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px;
+    font-size: 0.82rem; color: var(--text); z-index: 200; opacity: 0;
+    transform: translateY(10px); transition: all 0.3s;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* Share of Freehold tenure tag */
+  .tag.tenure.sof { color: var(--fav); }
+
+  /* --- Responsive layout: wide / 4K --- */
+  @media (min-width: 1600px) {
+    body { max-width: 1920px; }
+    .cards { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+  }
+  @media (min-width: 2560px) {
+    body { max-width: 2560px; padding: 24px; }
+    .cards { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 14px; }
+    .property-card { padding: 16px; font-size: 0.88rem; }
+    .carousel { height: 160px; }
+    .score-breakdown { font-size: 0.82rem; }
+  }
+
+  /* --- Responsive: mobile --- */
+  @media (max-width: 768px) {
+    body { padding: 8px; }
+    .summary { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .nav { flex-wrap: wrap; gap: 4px; font-size: 0.7rem; padding: 6px 8px; }
+    .filter-bar { flex-direction: column; align-items: stretch; gap: 6px; }
+    .filter-bar input[type="text"] { width: 100%; }
+    .filter-bar .filter-group { width: 100%; }
+    .filter-bar select { width: 100%; }
+    .cards { grid-template-columns: 1fr; }
+    .settings-body { grid-template-columns: 1fr 1fr; }
+    .carousel { height: 120px; }
+    .pills { gap: 3px; }
+    .pill { font-size: 0.6rem; padding: 2px 5px; }
+    .card-header .price { font-size: 1rem; }
+    .card-tracking { flex-direction: column; }
+    .card-tracking select, .card-notes textarea { width: 100%; }
+    #map-container { height: 50vh; }
+    .table-view { font-size: 0.65rem; }
+    .table-view th, .table-view td { padding: 3px 4px; }
+  }
+  @media (max-width: 480px) {
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    .settings-body { grid-template-columns: 1fr; }
+    .carousel { height: 140px; }
+    .nav { font-size: 0.65rem; }
+  }
+
+  /* --- Floor plans / brochure / video --- */
+  .media-links { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; align-items: center; }
+  .floorplan-thumb { width: 56px; height: 40px; object-fit: cover; border-radius: 3px; cursor: pointer; border: 1px solid var(--border); }
+  .floorplan-count { font-size: 0.65rem; color: var(--muted); }
+  .media-link { font-size: 0.72rem; padding: 2px 7px; border-radius: 3px; background: var(--score-bg); color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .media-link:hover { background: #232736; text-decoration: none; }
+
+  /* Floor plan lightbox */
+  .lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 300; align-items: center; justify-content: center; }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 90vw; max-height: 90vh; border-radius: 6px; }
+  .lightbox-close { position: absolute; top: 16px; right: 20px; color: #fff; font-size: 1.6rem; cursor: pointer; background: none; border: none; }
+
+  /* Viewings section */
+  .viewing-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; display: flex; align-items: flex-start; gap: 14px; position: relative; }
+  .viewing-card .vc-date { text-align: center; min-width: 50px; }
+  .viewing-card .vc-date-day { font-size: 1.5rem; font-weight: 700; line-height: 1; color: var(--accent); }
+  .viewing-card .vc-date-month { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+  .viewing-card .vc-date-time { font-size: 0.8rem; color: var(--text); font-weight: 600; margin-top: 4px; }
+  .viewing-card .vc-body { flex: 1; }
+  .viewing-card .vc-addr { font-weight: 600; font-size: 0.9rem; color: var(--text); margin-bottom: 2px; }
+  .viewing-card .vc-notes { font-size: 0.78rem; color: var(--muted); margin-top: 4px; font-style: italic; }
+  .viewing-card .vc-status { display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .vc-status.scheduled { background: #dbeafe; color: #1d4ed8; }
+  .vc-status.completed { background: #d1fae5; color: #065f46; }
+  .vc-status.cancelled { background: #fee2e2; color: #991b1b; }
+  .viewing-card .vc-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .viewing-card .vc-actions button { font-size: 0.72rem; padding: 3px 10px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: none; color: var(--muted); }
+  .viewing-card .vc-actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .viewing-card .vc-del { position: absolute; top: 10px; right: 10px; background: none; border: none; cursor: pointer; color: var(--muted); font-size: 0.9rem; opacity: 0.5; }
+  .viewing-card .vc-del:hover { opacity: 1; color: #ef4444; }
+  .viewing-card.vc-past { opacity: 0.6; }
+
+  /* --- Room size table --- */
+  .rooms-section { margin-top: 6px; }
+  .rooms-section > summary { font-size: 0.72rem; color: var(--muted); cursor: pointer; list-style: none; }
+  .rooms-section > summary::-webkit-details-marker { display: none; }
+  .rooms-table { width: 100%; border-collapse: collapse; font-size: 0.7rem; margin-top: 4px; }
+  .rooms-table th { color: var(--muted); font-weight: 500; text-align: left; padding: 1px 4px; font-size: 0.65rem; }
+  .rooms-table td { padding: 1px 4px; border-bottom: 1px solid var(--border); }
+  .rooms-table td.area-ok { color: var(--green); } .rooms-table td.area-warn { color: var(--amber); } .rooms-table td.area-small { color: var(--red); }
+
+  /* --- Negotiation block --- */
+  .negotiation-block { background: #1a2030; border: 1px solid #2a3555; border-radius: 5px; padding: 6px 10px; margin-top: 6px; font-size: 0.75rem; }
+  .negotiation-block .neg-title { font-weight: 700; color: var(--accent); margin-bottom: 3px; }
+  .negotiation-block .neg-qualify { color: var(--green); font-weight: 600; }
+  .negotiation-block .neg-no-qualify { color: var(--amber); }
+  .negotiation-block .neg-row { display: flex; justify-content: space-between; color: var(--muted); padding: 1px 0; }
+  .negotiation-block .neg-note { font-size: 0.67rem; color: var(--muted); margin-top: 2px; }
+
+  /* Price history timeline */
+  .price-history-timeline { background: #1a1a2a; border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; margin-top: 6px; font-size: 0.73rem; }
+  .ph-title { font-weight: 600; color: var(--text); margin-bottom: 4px; font-size: 0.75rem; }
+  .ph-entry { display: flex; gap: 8px; align-items: center; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .ph-entry:last-child { border-bottom: none; }
+  .ph-date { color: var(--muted); min-width: 75px; font-size: 0.68rem; }
+  .ph-price { color: var(--text); font-weight: 500; min-width: 55px; }
+  .ph-change { font-size: 0.68rem; }
+  .ph-down { color: var(--green); }
+  .ph-up { color: var(--red); }
+
+  /* Recommended offer */
+  .recommended-offer { background: #1a2a1a; border: 1px solid #2a4a2a; border-radius: 5px; padding: 8px 10px; margin-top: 6px; font-size: 0.75rem; }
+
+  /* Deposit recommendation */
+  .deposit-rec { background: #1a1a2a; border: 1px solid #2a2a4a; border-radius: 5px; padding: 8px 10px; margin-top: 6px; font-size: 0.75rem; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  .deposit-rec .dep-label { color: var(--muted); }
+  .deposit-rec .dep-val { font-weight: 600; }
+  .deposit-rec .dep-val.green { color: var(--green); }
+  .deposit-rec .dep-val.amber { color: var(--amber); }
+  .deposit-rec .dep-val.red { color: var(--red); }
+
+  /* Exclude indicator */
+  .excl-indicator { background: rgba(248,113,113,0.1); border: 1px dashed rgba(248,113,113,0.3); border-radius: 5px; padding: 6px 10px; margin-bottom: 8px; font-size: 0.75rem; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .excl-indicator button { background: none; border: 1px solid var(--border); color: var(--text); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; }
+  .excl-indicator button:hover { border-color: var(--accent); }
+  .ro-title { font-weight: 600; color: var(--green); margin-bottom: 3px; }
+  .ro-discount { font-weight: 400; color: var(--muted); font-size: 0.7rem; }
+  .ro-allin { padding: 2px 0; }
+  .ro-allin.green { color: var(--green); }
+  .ro-allin.amber { color: var(--amber); }
+  .ro-allin.red { color: var(--red); }
+  .ro-reasoning { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+  .ro-reason { font-size: 0.67rem; color: var(--muted); background: rgba(255,255,255,0.04); padding: 1px 6px; border-radius: 3px; }
+
+  /* --- Filter bar --- */
+  .filter-bar {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; margin-bottom: 12px; font-size: 0.78rem;
+  }
+  .filter-bar input[type="text"] {
+    background: var(--score-bg); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; width: 160px;
+  }
+  .filter-bar select {
+    background: var(--score-bg); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 6px; border-radius: 4px; font-size: 0.75rem;
+  }
+  .filter-bar input[type="number"] {
+    background: var(--score-bg); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 6px; border-radius: 4px; font-size: 0.75rem; width: 72px;
+  }
+  .filter-bar label { font-size: 0.68rem; color: var(--muted); white-space: nowrap; }
+  .filter-bar .filter-group { display: flex; align-items: center; gap: 4px; }
+  .filter-btn { background: var(--score-bg); border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+  .filter-btn:hover { color: var(--text); }
+  .filter-count { font-size: 0.72rem; color: var(--muted); margin-left: 4px; }
+
+  /* --- Settings drawer --- */
+  .settings-drawer { margin-bottom: 12px; }
+  .settings-drawer > summary {
+    cursor: pointer; font-size: 0.82rem; font-weight: 600; padding: 8px 12px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    list-style: none; display: flex; align-items: center; gap: 6px; color: var(--muted);
+  }
+  .settings-drawer > summary::-webkit-details-marker { display: none; }
+  .settings-drawer > summary::before { content: "⚙"; font-size: 0.9rem; }
+  .settings-drawer[open] > summary { border-radius: 8px 8px 0 0; color: var(--text); }
+  .settings-body {
+    background: var(--card); border: 1px solid var(--border); border-top: none;
+    border-radius: 0 0 8px 8px; padding: 12px; display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px;
+  }
+  .settings-field { display: flex; flex-direction: column; gap: 3px; }
+  .settings-field label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+  .settings-field input {
+    background: var(--score-bg); border: 1px solid var(--border); color: var(--text);
+    padding: 5px 8px; border-radius: 4px; font-size: 0.8rem;
+  }
+  .settings-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+  .settings-apply { background: var(--accent); color: #fff; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-weight: 600; }
+  .settings-apply:hover { opacity: 0.85; }
+  .settings-note { font-size: 0.72rem; color: var(--muted); }
+  .settings-section-label {
+    font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #64748b;
+    margin: 0.75rem 0 0.25rem; padding-top: 0.5rem;
+    border-top: 1px solid #e2e8f0; grid-column: 1 / -1;
+  }
+  .settings-section-label:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+  .settings-field select {
+    background: var(--score-bg); border: 1px solid var(--border); color: var(--text);
+    padding: 5px 8px; border-radius: 4px; font-size: 0.8rem; width: 100%;
+  }
+</style>
+</head>
+<body>
+
+{# ---- Macros ---- #}
+{% macro render_card(prop, card_class="", section_label="") %}
+<div class="property-card {{ card_class }} {% if prop._gates_passed %}qualifying{% endif %} {% if prop._is_favourite %}favourite{% endif %} {% if prop._is_excluded %}excluded{% endif %}"
+  data-id="{{ prop.id }}"
+  data-address="{{ (prop.address or prop.title or '')|lower }}"
+  data-tenure="{{ prop.tenure or '' }}"
+  data-beds="{{ prop.bedrooms or 0 }}"
+  data-epc="{{ prop.epc_rating or '' }}"
+  data-ct="{{ prop.council_tax_band or '' }}"
+  data-score="{{ prop._scores.total if prop._scores else 0 }}"
+  data-monthly="{{ prop._costs.total_all_in_monthly|int if prop._costs else 0 }}"
+  data-price="{{ prop.price }}"
+  data-dom="{{ prop._days_on_market or 0 }}"
+  data-sc="{{ prop.service_charge_pa or 0 }}"
+  data-gr="{{ prop.ground_rent_pa or 0 }}"
+  data-ct-monthly="{{ prop._costs.council_tax_monthly|int if prop._costs else 0 }}"
+  data-station-walk="{{ prop._station_walk_min or 999 }}"
+  data-commute-london="{{ prop._commute_london_min or 999 }}"
+  data-lat="{{ prop._latitude or '' }}"
+  data-lng="{{ prop._longitude or '' }}"
+  data-area="{{ prop._search_area or '' }}"
+  id="card-{{ prop.id }}">
+
+  {# Image carousel #}
+  {% set images = prop.images|json_parse if prop.images else [] %}
+  {% if images %}
+  <div class="carousel" id="carousel-{{ prop.id }}">
+    <div class="carousel-track">
+      {% for img in images %}
+      <img src="{{ img }}" alt="Photo {{ loop.index }}" loading="lazy">
+      {% endfor %}
+    </div>
+    {% if images|length > 1 %}
+    <button class="carousel-btn prev" onclick="carouselScroll('carousel-{{ prop.id }}', -1)">&lt;</button>
+    <button class="carousel-btn next" onclick="carouselScroll('carousel-{{ prop.id }}', 1)">&gt;</button>
+    <div class="carousel-counter">1 / {{ images|length }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# Floor plan + brochure + video links #}
+  {% if prop._floor_plans or prop._video_url or prop._brochure_url %}
+  <div class="media-links">
+    {% if prop._floor_plans %}
+      <img class="floorplan-thumb" src="{{ prop._floor_plans[0] }}" alt="Floor plan" loading="lazy"
+           onclick="openLightbox('{{ prop._floor_plans[0] }}')" title="Click to view floor plan">
+      {% if prop._floor_plans|length > 1 %}
+        <span class="floorplan-count">+{{ prop._floor_plans|length - 1 }} more</span>
+      {% endif %}
+    {% endif %}
+    {% if prop._brochure_url %}
+      <a class="media-link" href="{{ prop._brochure_url }}" target="_blank" rel="noopener">📄 Brochure</a>
+    {% endif %}
+    {% if prop._video_url %}
+      <a class="media-link" href="{{ prop._video_url }}" target="_blank" rel="noopener">▶ Virtual tour</a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="card-header">
+    <div>
+      <span class="price">{{ prop.price|currency }}</span>
+      {% if section_label %}<span class="badge section-label section-{{ section_label|lower|replace(' ', '-') }}">{{ section_label }}</span>{% endif %}
+      {% if prop._is_new %}<span class="badge new" id="new-badge-{{ prop.id }}" onclick="dismissNew({{ prop.id }})" title="Click to dismiss">NEW</span>{% endif %}
+      {% if prop._is_reduced %}
+        <span class="badge reduced">↓ REDUCED</span>
+        {% if prop._price_history and prop._price_history|length >= 2 %}
+          {% set latest = prop._price_history[-1] %}
+          {% set prev = prop._price_history[-2] %}
+          <span class="price-history">
+            £{{ (prev.price / 1000)|round(0)|int }}k → £{{ (latest.price / 1000)|round(0)|int }}k
+            <span class="reduction">({{ latest.change_pct|round(1) }}%)</span>
+          </span>
+        {% endif %}
+      {% endif %}
+      {% if prop._over_budget_pct %}<span class="badge stretch-badge">+{{ prop._over_budget_pct }}%</span>{% endif %}
+    </div>
+    {% if prop._scores %}
+    <div class="score {% if prop._scores.total >= 70 %}high{% elif prop._scores.total >= 50 %}medium{% else %}low{% endif %}">
+      {{ prop._scores.total }}/100
+    </div>
+    {% endif %}
+    <div class="card-actions">
+      <button class="action-btn {% if prop._is_favourite %}fav-active{% endif %}" onclick="toggleFavourite(event, {{ prop.id }})" title="{% if prop._is_favourite %}Remove from favourites{% else %}Add to favourites{% endif %}">
+        {% if prop._is_favourite %}&#9733;{% else %}&#9734;{% endif %}
+      </button>
+      <button class="action-btn {% if prop._is_excluded %}excl-active{% endif %}" onclick="toggleExclude({{ prop.id }})" title="{% if prop._is_excluded %}Restore to reports{% else %}Exclude from reports{% endif %}">
+        &#10005;
+      </button>
+    </div>
+  </div>
+
+  <div class="card-address">
+    {% if prop.postcode %}
+      <a href="https://www.google.com/maps/search/{{ (prop.address or prop.title)|urlencode }}+{{ prop.postcode|urlencode }}" target="_blank" title="View on Google Maps">{{ prop.address or prop.title }}</a>
+      <span style="color: var(--accent);"> {{ prop.postcode }}</span>
+    {% else %}
+      {{ prop.address or prop.title }}
+    {% endif %}
+  </div>
+
+  <div class="card-meta">
+    <span class="tag">{{ prop.property_type or '?' }}</span>
+    {% if prop.bedrooms %}<span class="tag">{{ prop.bedrooms }} bed</span>{% endif %}
+    {% if prop.bathrooms %}<span class="tag">{{ prop.bathrooms }} bath</span>{% endif %}
+    {% set tenure_display = {'freehold': 'Freehold', 'leasehold': 'Leasehold', 'share_of_freehold': 'Share of Freehold'} %}
+    {% if prop.tenure %}<span class="tag tenure {% if prop.tenure == 'share_of_freehold' %}sof{% endif %}">{{ tenure_display.get(prop.tenure, prop.tenure) }}</span>{% endif %}
+    {% if prop.lease_years %}<span class="tag {% if prop.lease_years < 120 %}bad{% elif prop.lease_years < 200 %}warn{% else %}good{% endif %}">{{ prop.lease_years }}yr lease</span>{% endif %}
+    {% if prop.epc_rating %}<span class="tag {% if prop.epc_rating in ['A','B'] %}good{% elif prop.epc_rating == 'C' %}warn{% else %}bad{% endif %}">EPC {{ prop.epc_rating }}</span>{% else %}<span class="tag" style="opacity:0.5">EPC ?</span>{% endif %}
+    {% if prop.council_tax_band %}<span class="tag">CT {{ prop.council_tax_band }}</span>{% endif %}
+  </div>
+
+  {# Gate failures — prominent banner for non-qualifying properties #}
+  {% if prop._failed_gates and not prop._gates_passed %}
+  <div class="gate-failures-banner">
+    {% for g in prop._failed_gates %}
+    <div class="gate-fail-top">&#10005; <strong>{{ g.gate_name|replace('_', ' ')|title }}</strong>: {{ g.reason }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Monthly cost bar — expandable, all-in as headline #}
+  {% if prop._costs %}
+  <details class="cost-bar {{ prop._costs.affordability_rating }}">
+    <summary>
+      <span class="total">All-in: £{{ prop._costs.total_all_in_monthly|int }}/mo</span>
+      <span class="pct">{{ prop._costs.all_in_pct_take_home }}%</span>
+      <span class="cost-breakdown-inline">
+        mtg £{{ prop._costs.mortgage_monthly|int }}
+        {% if prop._costs.service_charge_monthly > 0 %} · SC £{{ prop._costs.service_charge_monthly|int }}{% endif %}
+        {% if prop._costs.ground_rent_monthly > 0 %} · GR £{{ prop._costs.ground_rent_monthly|int }}{% endif %}
+        {% if prop._costs.council_tax_monthly > 0 %} · CT £{{ prop._costs.council_tax_monthly|int }}{% if prop._costs.council_tax_estimated %}~{% endif %}{% endif %}
+        · bills £{{ config.estimated_bills.total_monthly | default(211) }}
+      </span>
+      <span class="expand-hint">▼</span>
+    </summary>
+    <div class="cost-breakdown-full">
+      <div class="cost-row"><span>Mortgage</span><span>£{{ prop._costs.mortgage_monthly|int }}/mo</span></div>
+      {% if prop._costs.service_charge_monthly > 0 %}<div class="cost-row"><span>Service charge</span><span>£{{ prop._costs.service_charge_monthly|int }}/mo</span></div>{% endif %}
+      {% if prop._costs.ground_rent_monthly > 0 %}<div class="cost-row"><span>Ground rent</span><span>£{{ prop._costs.ground_rent_monthly|int }}/mo</span></div>{% endif %}
+      {% if prop._costs.council_tax_monthly > 0 %}<div class="cost-row"><span>Council tax{% if prop._costs.council_tax_estimated %} <span style="color:var(--muted);font-size:0.7em">(est.)</span>{% endif %}</span><span>£{{ prop._costs.council_tax_monthly|int }}/mo</span></div>{% endif %}
+      <div class="cost-row cost-row-bills-first"><span>Energy</span><span>~£110</span></div>
+      <div class="cost-row cost-row-bills"><span>Water</span><span>~£40</span></div>
+      <div class="cost-row cost-row-bills"><span>Insurance</span><span>~£20</span></div>
+      <div class="cost-row cost-row-bills"><span>Broadband</span><span>~£28</span></div>
+      <div class="cost-row cost-row-bills"><span>TV Licence</span><span>~£13</span></div>
+      <div class="cost-row cost-total"><span>All-in total</span><span>£{{ prop._costs.total_all_in_monthly|int }}/mo</span></div>
+      {% set remaining = config.user.monthly_take_home - prop._costs.total_all_in_monthly %}
+      <div class="cost-row" style="border-top:1px solid var(--border);padding-top:4px;margin-top:4px;color:{% if remaining >= 500 %}var(--green){% elif remaining >= 300 %}var(--warn){% else %}var(--red){% endif %}">
+        <span>Remaining disposable</span><span>£{{ remaining|int }}/mo</span>
+      </div>
+    </div>
+  </details>
+  {% endif %}
+
+  {# All pills — single merged row #}
+  <div class="pills">
+    {% if prop._crime_total is not none %}
+      <a class="pill {% if prop._crime_total <= 10 %}crime-green{% elif prop._crime_total <= 20 %}crime-amber{% else %}crime-red{% endif %}"
+         {% if prop._crime_link %}href="{{ prop._crime_link }}" target="_blank"{% endif %}
+         title="View crime map for this area">
+        Crime: {{ prop._crime_total }}/mo
+      </a>
+    {% endif %}
+    {% if prop._days_on_market is not none %}
+      <span class="pill {% if prop._days_on_market < 30 %}dom-grey{% elif prop._days_on_market < 60 %}dom-amber{% else %}dom-red{% endif %}">
+        {{ prop._days_on_market }}d listed
+      </span>
+    {% endif %}
+    {% if prop._stretch_monthly %}
+      <span class="pill pill-stretch">Stretch: £{{ prop._stretch_monthly|int }}/mo</span>
+    {% endif %}
+    {% if prop._days_on_market and prop._days_on_market >= 90 %}
+      <span class="pill dom-red" title="On market 90+ days">Possibly overpriced</span>
+    {% endif %}
+    {% if prop.lease_years and prop.lease_years < 80 %}
+      <span class="pill" style="color: var(--red); font-weight: 600;" title="Short lease — extension likely required">⚠ Lease {{ prop.lease_years }}yr</span>
+    {% elif prop.lease_years and prop.lease_years < 120 %}
+      <span class="pill" style="color: var(--amber);" title="Lease under 120 years">⚠ Lease {{ prop.lease_years }}yr</span>
+    {% endif %}
+    {% if prop._nearest_station %}
+      {% set walk_origin = (prop.postcode or prop.address or prop.title)|urlencode %}
+      {% set walk_dest_station = prop._nearest_station|urlencode ~ '+station' %}
+      <a class="pill {% if prop._station_walk_min and prop._station_walk_min <= 15 %}walk-green{% elif prop._station_walk_min and prop._station_walk_min <= 25 %}walk-amber{% else %}walk-red{% endif %}"
+         href="https://www.google.com/maps/dir/?api=1&origin={{ walk_origin }}&destination={{ walk_dest_station }}&travelmode=walking"
+         target="_blank" rel="noopener"
+         title="Walk to {{ prop._nearest_station }}">
+        🚉 {{ prop._nearest_station }}{% if prop._station_walk_min %} {{ prop._station_walk_min }}min{% endif %}
+      </a>
+    {% endif %}
+    {% if prop._commute_london_min %}
+      <span class="pill" title="Commute to London">🏙️ {{ prop._commute_london_min }}min</span>
+    {% endif %}
+    {% if prop._supermarket_name %}
+      {% set walk_origin_super = (prop.postcode or prop.address or prop.title)|urlencode %}
+      {% set walk_dest_super = prop._supermarket_name|urlencode %}
+      <a class="pill {% if prop._supermarket_walk_min and prop._supermarket_walk_min <= 10 %}walk-green{% elif prop._supermarket_walk_min and prop._supermarket_walk_min <= 20 %}walk-amber{% else %}walk-red{% endif %}"
+         href="https://www.google.com/maps/dir/?api=1&origin={{ walk_origin_super }}&destination={{ walk_dest_super }}&travelmode=walking"
+         target="_blank" rel="noopener"
+         title="Walk to {{ prop._supermarket_name }}">
+        🛒 {{ prop._supermarket_walk_min }}min
+      </a>
+    {% endif %}
+    {% if prop._flood_zone is not none and prop._flood_zone >= 2 %}
+      <span class="pill {% if prop._flood_zone == 2 %}flood-amber{% else %}flood-red{% endif %}" title="Flood risk zone">🌊 Zone {{ prop._flood_zone }}</span>
+    {% endif %}
+    {% if prop._broadband_speed and prop._broadband_speed < 50 %}
+      <span class="pill {% if prop._broadband_speed >= 20 %}broadband-ok{% else %}broadband-poor{% endif %}" title="Broadband speed">📶 {{ prop._broadband_speed }}Mbps</span>
+    {% endif %}
+    {% if prop._annual_season_ticket %}
+      <span class="pill" title="Monthly commute cost (season ticket £{{ prop._annual_season_ticket|int }}/yr)">🗓️ £{{ (prop._annual_season_ticket / 12)|round(0)|int }}/mo commute</span>
+    {% endif %}
+  </div>
+
+  {# Score breakdown — collapsible, hover for reason #}
+  {% if prop._scores %}
+  <details class="rooms-section">
+    <summary>Score {{ prop._scores.total }}/100 breakdown</summary>
+    <div class="score-breakdown">
+      {% for label, key in [('Financial','financial_fit'),('Crime','crime_safety'),('Costs','cost_predictability'),('Layout','layout_livability'),('Walk','walkability'),('Long-term','long_term_flexibility')] %}
+      <div class="score-item" title="{{ prop._scores[key ~ '_reason'] or '' }}">
+        <span class="score-label">{{ label }}</span>
+        <span class="score-val">{{ prop._scores[key] }}</span>
+        {% if prop._scores[key ~ '_reason'] %}<div class="score-tooltip">{{ prop._scores[key ~ '_reason'] }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
+  {# Gate failures #}
+  {% if prop._failed_gates %}
+    {% if prop._failed_gates|length <= 2 %}
+    <div class="gate-failures">
+      {% for g in prop._failed_gates %}
+      <div class="gate-fail">&#10005; {{ g.gate_name }}: {{ g.reason }}</div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="gate-pills">
+      {% for g in prop._failed_gates %}
+      <span class="gate-pill" title="{{ g.reason }}">{{ g.gate_name }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endif %}
+
+  {# Key features #}
+  {% set features = prop.key_features|json_parse %}
+  {% if features %}
+  <div class="features">{{ features[:5]|join(', ') }}</div>
+  {% endif %}
+
+  {# Property description #}
+  {% if prop.description %}
+  <details class="property-description">
+    <summary>📝 Description</summary>
+    <div class="desc-text">{{ prop.description }}</div>
+  </details>
+  {% endif %}
+
+  {# Room size table #}
+  {% if prop._rooms %}
+  <details class="rooms-section">
+    <summary>🏠 Rooms ({{ prop._rooms|length }})</summary>
+    <table class="rooms-table">
+      <thead><tr><th>Room</th><th>Size</th><th></th></tr></thead>
+      <tbody>
+      {% for room in prop._rooms %}
+        {% set w = room.width %}
+        {% set l = room.length %}
+        {% set area = (w * l) if (w and l) else none %}
+        <tr>
+          <td>{{ room.name }}</td>
+          <td>{% if w and l %}{{ w }}×{{ l }}{{ room.unit or 'm' }}{% elif w %}{{ w }}{{ room.unit or 'm' }}{% else %}—{% endif %}</td>
+          <td class="{% if area and area >= 12 %}area-ok{% elif area and area >= 8 %}area-warn{% elif area %}area-small{% endif %}">
+            {% if area %}{{ area|round(1) }}m²{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+
+  {# Negotiation block — condensed #}
+  {% if prop._negotiation %}
+  <div class="negotiation-block" style="padding:4px 8px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <span class="neg-title" style="margin:0;">Offer: £{{ (prop._negotiation.suggested_offer / 1000)|round(0)|int }}k (−{{ prop._negotiation.discount_pct }}%)</span>
+      <span style="font-size:0.72rem;color:var(--muted);">All-in £{{ prop._negotiation.offer_all_in_monthly|int }}/mo</span>
+      {% if prop._negotiation.would_qualify %}<span class="neg-qualify" style="font-size:0.7rem;">✓ Qualifies</span>{% else %}<span class="neg-no-qualify" style="font-size:0.7rem;">⚠ Still over</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# Price history — condensed: latest change inline, full collapsible #}
+  {% if prop._price_history and prop._price_history|length > 1 %}
+  <details class="rooms-section">
+    <summary>📉 Price history ({{ prop._price_history|length }} entries)</summary>
+    <div class="price-history-timeline" style="margin-top:4px;">
+      {% for entry in prop._price_history %}
+      <div class="ph-entry">
+        <span class="ph-date">{{ entry.recorded_date[:10] if entry is mapping else '' }}</span>
+        <span class="ph-price">£{{ (entry.price / 1000)|round(0)|int if entry is mapping else (entry / 1000)|round(0)|int }}k</span>
+        {% if entry is mapping and entry.change_amount %}
+          <span class="ph-change {% if entry.change_amount < 0 %}ph-down{% else %}ph-up{% endif %}">
+            {{ '↓' if entry.change_amount < 0 else '↑' }} £{{ (entry.change_amount|abs / 1000)|round(1) }}k
+            {% if entry.change_pct %}({{ entry.change_pct|round(1) }}%){% endif %}
+          </span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
+  {# Deposit + recommended offer — merged compact #}
+  {% if prop._deposit_rec or prop._recommended_offer %}
+  <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.7rem;color:var(--muted);margin-top:4px;padding:4px 8px;background:var(--score-bg);border-radius:4px;">
+    {% if prop._deposit_rec %}
+      {% set dr = prop._deposit_rec %}
+      <span>💳 Deposit: <strong style="color:var(--text);">£{{ '{:,}'.format(dr.deposit|int) }}</strong></span>
+      <span>Emergency: <strong style="color:var(--green);">£{{ '{:,}'.format(dr.emergency_fund|int) }}</strong></span>
+    {% endif %}
+    {% if prop._recommended_offer %}
+      {% set ro = prop._recommended_offer %}
+      <span>💰 Offer: <strong style="color:var(--green);">£{{ (ro.offer_price / 1000)|round(0)|int }}k</strong> (−{{ ro.discount_pct }}%)</span>
+      <span>All-in: <strong style="color:var(--{{ ro.offer_affordability }});">£{{ ro.offer_all_in_monthly|int }}/mo</strong></span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# Status tracking + Notes — compact #}
+  <div style="display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap;">
+    <span style="font-size:0.68rem;font-weight:600;color:var(--muted);">Status:</span>
+    <select id="tracking-{{ prop.id }}" onchange="saveTracking({{ prop.id }}, this.value)" style="font-size:0.72rem;padding:2px 4px;border-radius:3px;border:1px solid var(--border);background:var(--score-bg);color:var(--text);">
+      <option value="new">New</option>
+      <option value="reviewing">Reviewing</option>
+      <option value="contacted">Contacted</option>
+      <option value="viewing_booked">Viewing Booked</option>
+      <option value="viewed">Viewed</option>
+      <option value="offer_made">Offer Made</option>
+      <option value="rejected">Rejected</option>
+      <option value="archived">Archived</option>
+    </select>
+    <span class="note-saved" id="note-saved-{{ prop.id }}" style="font-size:0.62rem;color:var(--green);opacity:0;transition:opacity 0.3s;">✓ Saved</span>
+  </div>
+  <details class="rooms-section">
+    <summary>📝 Notes</summary>
+    <textarea id="note-{{ prop.id }}" placeholder="Add notes..." onblur="saveNote({{ prop.id }}, this.value)" style="width:100%;min-height:40px;max-height:80px;resize:vertical;font-size:0.72rem;padding:4px;border:1px solid var(--border);border-radius:3px;background:var(--score-bg);color:var(--text);font-family:inherit;margin-top:4px;"></textarea>
+  </details>
+
+  {# Footer — compact #}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:0.68rem;color:var(--muted);gap:4px;flex-wrap:wrap;">
+    <span>{% if prop.agent_name %}{{ prop.agent_name }}{% endif %}</span>
+    <div style="display:flex;gap:4px;align-items:center;">
+      <button class="enquiry-btn" onclick="sendEnquiry({{ prop.id }}, '{{ prop.portal_id }}', '{{ prop.address|default(prop.title, true)|replace("'", "\\'")|replace('"', '') }}', '{{ prop.agent_name|default('Estate Agent', true)|replace("'", "\\'")|replace('"', '') }}', '{{ prop.url|replace("'", "\\'")|replace('"', '') }}', '{{ prop.price }}')">✉</button>
+      <button class="enquiry-btn" style="border-color:var(--muted);color:var(--muted)" onclick="openViewingForm({{ prop.id }}, '{{ prop.address|default(prop.title, true)|replace("'", "\\'")|replace('"', '') }}')">📅</button>
+      <a href="{{ prop.url }}" target="_blank">View ↗</a>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{# ---- Page Content ---- #}
+
+{# ---- Settings drawer ---- #}
+<details class="settings-drawer" id="settings-drawer">
+  <summary>Criteria Settings</summary>
+  <div class="settings-body">
+    <div class="settings-section-label">Financial</div>
+    <div class="settings-field">
+      <label>Take-home (£/mo)</label>
+      <input type="number" id="cfg-take-home" step="50" min="500">
+    </div>
+    <div class="settings-field">
+      <label>Deposit (£)</label>
+      <input type="number" id="cfg-deposit" step="500">
+    </div>
+    <div class="settings-field">
+      <label>Mortgage Rate (%)</label>
+      <input type="number" id="cfg-rate" step="0.05" min="1" max="10">
+    </div>
+    <div class="settings-field">
+      <label>Term (years)</label>
+      <input type="number" id="cfg-term" step="1" min="10" max="35">
+    </div>
+    <div class="settings-field">
+      <label>Monthly target min (£)</label>
+      <input type="number" id="cfg-monthly-min" step="10">
+    </div>
+    <div class="settings-field">
+      <label>Monthly target max (£)</label>
+      <input type="number" id="cfg-monthly-max" step="10">
+    </div>
+    <div class="settings-field">
+      <label>Estimated bills (£/mo)</label>
+      <input type="number" id="cfg-bills" step="5" min="0">
+    </div>
+    <div class="settings-section-label">Price Caps</div>
+    <div class="settings-field">
+      <label>Freehold max price (£)</label>
+      <input type="number" id="cfg-freehold-max" step="1000">
+    </div>
+    <div class="settings-field">
+      <label>Leasehold max price (£)</label>
+      <input type="number" id="cfg-leasehold-max" step="1000">
+    </div>
+    <div class="settings-field">
+      <label>Service charge max (£/yr)</label>
+      <input type="number" id="cfg-sc-max" step="50">
+    </div>
+    <div class="settings-field">
+      <label>Ground rent max (£/yr)</label>
+      <input type="number" id="cfg-gr-max" step="10">
+    </div>
+    <div class="settings-field">
+      <label>Min lease (years)</label>
+      <input type="number" id="cfg-lease-min" step="10">
+    </div>
+    <div class="settings-section-label">Location &amp; Environment</div>
+    <div class="settings-field">
+      <label>Station max walk (min)</label>
+      <input type="number" id="cfg-station-walk" step="1" min="5" max="45">
+    </div>
+    <div class="settings-field">
+      <label>Supermarket max walk (min)</label>
+      <input type="number" id="cfg-super-walk" step="1" min="5" max="45">
+    </div>
+    <div class="settings-field">
+      <label>CT max band</label>
+      <select id="cfg-ct-band" title="Maximum council tax band">
+        <option value="A">A</option>
+        <option value="B">B</option>
+        <option value="C">C</option>
+        <option value="D">D</option>
+      </select>
+    </div>
+    <div class="settings-field">
+      <label>EPC min rating</label>
+      <select id="cfg-epc-min" title="Minimum EPC energy rating">
+        <option value="A">A</option>
+        <option value="B">B</option>
+        <option value="C">C</option>
+        <option value="D">D</option>
+        <option value="E">E</option>
+      </select>
+    </div>
+    <div class="settings-field">
+      <label>Flood zone reject</label>
+      <select id="cfg-flood-zone" title="Reject flood zone at or above">
+        <option value="2">2+</option>
+        <option value="3">3 only</option>
+      </select>
+    </div>
+    <div class="settings-section-label">Your Contact Details (for enquiries)</div>
+    <div class="settings-field">
+      <label>Your Name</label>
+      <input type="text" id="cfg-user-name" placeholder="Your full name">
+    </div>
+    <div class="settings-field">
+      <label>Your Email</label>
+      <input type="email" id="cfg-user-email" placeholder="you@example.com">
+    </div>
+    <div class="settings-field">
+      <label>Your Phone</label>
+      <input type="tel" id="cfg-user-phone" placeholder="07...">
+    </div>
+    <div class="settings-field">
+      <label>Your Postcode</label>
+      <input type="text" id="cfg-user-postcode" placeholder="e.g. ME14 1ST">
+    </div>
+    <div class="settings-section-label">Crime Thresholds (per month)</div>
+    <div class="settings-field">
+      <label>ASB max</label>
+      <input type="number" id="cfg-crime-asb" step="1" min="0">
+    </div>
+    <div class="settings-field">
+      <label>Burglary max</label>
+      <input type="number" id="cfg-crime-burglary" step="1" min="0">
+    </div>
+    <div class="settings-field">
+      <label>Drugs max</label>
+      <input type="number" id="cfg-crime-drugs" step="1" min="0">
+    </div>
+    <div class="settings-field">
+      <label>Violent max</label>
+      <input type="number" id="cfg-crime-violent" step="1" min="0">
+    </div>
+    <div class="settings-actions">
+      <button type="button" class="settings-apply" onclick="applySettings()">Apply &amp; Recalculate</button>
+      <button type="button" class="filter-btn" onclick="resetSettings()">Reset to defaults</button>
+      <button type="button" class="filter-btn" onclick="runStressTest()">Stress Test</button>
+      <span class="settings-note">Cost bars update instantly. Gate/scoring changes require re-running <code>python -m src report</code>.</span>
+    </div>
+    <div id="stress-test-results" style="display:none; grid-column: 1 / -1; margin-top: 8px; padding: 8px; background: var(--score-bg); border-radius: 4px; font-size: 0.75rem;">
+    </div>
+  </div>
+</details>
+
+{# Financial profile bar #}
+<div class="profile-bar">
+  <span>Total savings: <span class="val">{{ config.user.total_savings|currency }}</span></span>
+  <span>Max deposit: <span class="val">{{ config.user.deposit|currency }}</span></span>
+  <span>Min emergency fund: <span class="val" style="color:var(--green)">{{ config.user.emergency_fund_target|currency }}</span></span>
+  <span>Rate: <span class="val">{{ config.user.mortgage_rate }}%</span></span>
+  <span>Term: <span class="val">{{ config.user.mortgage_term_years }}yr</span></span>
+  <span>Monthly target: <span class="val">£{{ config.monthly_target.min }}–£{{ config.monthly_target.max }}/mo</span></span>
+</div>
+
+{# Summary stats #}
+<div class="summary">
+  <div class="stat">
+    <div class="value">{{ total_properties }}</div>
+    <div class="label">Tracked</div>
+  </div>
+  <div class="stat green">
+    <div class="value">{{ qualifying_count }}</div>
+    <div class="label">Qualifying</div>
+  </div>
+  <div class="stat amber">
+    <div class="value">{{ new_today_count }}</div>
+    <div class="label">New Today</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ near_miss_count }}</div>
+    <div class="label">Near Misses</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ opportunities|length }}</div>
+    <div class="label">Opportunities</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ favourites|length }}</div>
+    <div class="label">Favourites</div>
+  </div>
+</div>
+
+{# Daily Changelog #}
+{% set reduced_props = [] %}
+{% for p in qualifying + near_misses + opportunities + favourites %}
+  {% if p._is_reduced and p._price_history|length > 0 %}
+    {% if reduced_props.append(p) %}{% endif %}
+  {% endif %}
+{% endfor %}
+{% if new_today_count > 0 or reduced_props|length > 0 %}
+<details class="changelog-section" style="margin-bottom: 12px; background: var(--card); border-radius: 8px; padding: 10px 14px; border: 1px solid var(--border);">
+  <summary style="cursor: pointer; font-weight: 600; font-size: 0.85rem; color: var(--text); list-style: none;">
+    📋 Today's Changes
+    <span style="font-weight: 400; color: var(--muted); font-size: 0.75rem; margin-left: 8px;">
+      {% if new_today_count > 0 %}+{{ new_today_count }} new{% endif %}
+      {% if reduced_props|length > 0 %}{% if new_today_count > 0 %} · {% endif %}{{ reduced_props|length }} reduced{% endif %}
+    </span>
+  </summary>
+  <div style="margin-top: 8px; font-size: 0.75rem;">
+    {% if new_today_count > 0 %}
+    <div style="margin-bottom: 6px;">
+      <strong style="color: var(--green);">New listings ({{ new_today_count }}):</strong>
+      <ul style="margin: 4px 0 0 16px; padding: 0;">
+        {% for p in new_today[:15] %}
+        <li style="margin-bottom: 2px;"><a href="#card-{{ p.id }}" style="color: var(--text); text-decoration: none;">{{ p.address or p.title }}</a> — <span style="color: var(--accent);">{{ p.price|currency }}</span> · {{ p.bedrooms or '?' }} bed · {{ p.tenure or '' }}</li>
+        {% endfor %}
+        {% if new_today|length > 15 %}<li style="color: var(--muted);">...and {{ new_today|length - 15 }} more</li>{% endif %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if reduced_props|length > 0 %}
+    <div>
+      <strong style="color: var(--amber);">Price reductions ({{ reduced_props|length }}):</strong>
+      <ul style="margin: 4px 0 0 16px; padding: 0;">
+        {% for p in reduced_props[:15] %}
+        <li style="margin-bottom: 2px;">
+          <a href="#card-{{ p.id }}" style="color: var(--text); text-decoration: none;">{{ p.address or p.title }}</a>
+          — Now <span style="color: var(--green);">{{ p.price|currency }}</span>
+          {% if p._price_history|length > 0 %}
+            (was {{ p._price_history[0].price|currency if p._price_history[0] is mapping else p._price_history[0]|currency }})
+          {% endif %}
+        </li>
+        {% endfor %}
+        {% if reduced_props|length > 15 %}<li style="color: var(--muted);">...and {{ reduced_props|length - 15 }} more</li>{% endif %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+
+{# Sticky navigation #}
+<nav class="nav" id="nav">
+  <a href="#sec-favourites">Favourites <span class="badge-count">{{ favourites|length }}</span></a>
+  <a href="#sec-viewings" id="nav-viewings">Viewings <span class="badge-count" id="nav-viewings-count">0</span></a>
+  <a href="#sec-qualifying">Qualifying <span class="badge-count">{{ qualifying_count }}</span></a>
+  <a href="#sec-opportunities">Opportunities <span class="badge-count">{{ opportunities|length }}</span></a>
+  <a href="#sec-near-misses">Near Misses <span class="badge-count">{{ near_miss_count }}</span></a>
+  <span class="nav-new-count">★ New: {{ new_today_count }}</span>
+  <a href="#sec-areas">Areas</a>
+  <span style="margin-left: auto; font-size: 0.72rem; color: var(--muted);">Generated: {{ generated_at }}</span>
+</nav>
+
+{# ---- Filter bar ---- #}
+<div class="filter-bar" id="filter-bar" autocomplete="off">
+  <div class="filter-group">
+    <input type="text" id="filter-search" placeholder="Search address…" oninput="applyFilters()" autocomplete="off">
+  </div>
+  <div class="filter-group">
+    <label>Tenure</label>
+    <select id="filter-tenure" title="Filter by tenure" onchange="applyFilters()">
+      <option value="">All</option>
+      <option value="freehold">Freehold</option>
+      <option value="leasehold">Leasehold</option>
+      <option value="share_of_freehold">Share of freehold</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Beds ≥</label>
+    <select id="filter-beds" title="Minimum bedrooms" onchange="applyFilters()">
+      <option value="">Any</option>
+      <option value="1">1+</option>
+      <option value="2">2+</option>
+      <option value="3">3+</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>EPC ≥</label>
+    <select id="filter-epc" title="Minimum EPC rating" onchange="applyFilters()">
+      <option value="">Any</option>
+      <option value="C">C or better</option>
+      <option value="B">B or better</option>
+      <option value="A">A only</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>CT ≤</label>
+    <select id="filter-ct" title="Maximum council tax band" onchange="applyFilters()">
+      <option value="">Any</option>
+      <option value="A">A</option>
+      <option value="B">B</option>
+      <option value="C">C</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Area</label>
+    <select id="filter-area" title="Filter by area" onchange="applyFilters()">
+      <option value="">All Areas</option>
+      {% for group in config.search_areas.values() %}{% for area in group %}
+      <option value="{{ area.name }}">{{ area.name }}</option>
+      {% endfor %}{% endfor %}
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Score ≥</label>
+    <input type="number" id="filter-score" min="0" max="100" placeholder="0" oninput="applyFilters()">
+  </div>
+  <div class="filter-group">
+    <label>Max £/mo</label>
+    <input type="number" id="filter-monthly" min="0" placeholder="any" step="50" oninput="applyFilters()">
+  </div>
+  <div class="filter-group">
+    <label>Sort</label>
+    <select id="filter-sort" title="Sort cards" onchange="sortCards(this.value)">
+      <option value="score-desc">Score ↓</option>
+      <option value="price-asc">Price ↑</option>
+      <option value="price-desc">Price ↓</option>
+      <option value="monthly-asc">All-in monthly ↑</option>
+      <option value="dom-desc">Days listed ↓</option>
+      <option value="station-asc">Station walk ↑</option>
+      <option value="commute-asc">London commute ↑</option>
+      <option value="newest">Newest first</option>
+    </select>
+  </div>
+  <button type="button" class="filter-btn" onclick="clearFilters()">Clear</button>
+  <button type="button" class="filter-btn" onclick="exportCSV()" title="Export visible cards to CSV">⬇ CSV</button>
+  <button type="button" class="filter-btn" id="view-toggle-btn" onclick="toggleTableView()" title="Toggle table/card view">≡ Table</button>
+  <button type="button" class="filter-btn" id="map-toggle-btn" onclick="toggleMapView()" title="Toggle map view">📍 Map</button>
+  <span class="filter-count" id="filter-count"></span>
+</div>
+
+{# ---- Map View Container ---- #}
+<div id="map-container"></div>
+
+{# ---- Table View Container ---- #}
+<div class="table-view" id="table-view">
+  <table>
+    <thead>
+      <tr>
+        <th onclick="sortTable(0)">Address</th>
+        <th onclick="sortTable(1)">Price</th>
+        <th onclick="sortTable(2)">All-in/mo</th>
+        <th onclick="sortTable(3)">Score</th>
+        <th onclick="sortTable(4)">Beds</th>
+        <th onclick="sortTable(5)">Tenure</th>
+        <th onclick="sortTable(6)">CT</th>
+        <th onclick="sortTable(7)">Station</th>
+        <th onclick="sortTable(8)">Days</th>
+        <th onclick="sortTable(9)">Status</th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="table-body"></tbody>
+  </table>
+</div>
+
+{% if is_first_import %}
+<div class="first-import-notice">
+  First Import — {{ total_properties }} properties loaded. "New Today" capped at 20.
+</div>
+{% endif %}
+
+{# ---- Today's Actions Checklist ---- #}
+<div class="todays-actions" id="todays-actions">
+  <h3 style="margin:0 0 8px 0;font-size:0.9rem;">📋 Today's Actions</h3>
+  <div class="action-items">
+    {% if new_today %}
+    <label class="action-item"><input type="checkbox" onchange="this.parentElement.classList.toggle('done')"> Review {{ new_today|length }} new propert{{ 'y' if new_today|length == 1 else 'ies' }} today</label>
+    {% endif %}
+    {% if qualifying %}
+    <label class="action-item"><input type="checkbox" onchange="this.parentElement.classList.toggle('done')"> Check {{ qualifying|length }} qualifying propert{{ 'y' if qualifying|length == 1 else 'ies' }} — send enquiries for any not yet contacted</label>
+    {% endif %}
+    {% if opportunities %}
+    <label class="action-item"><input type="checkbox" onchange="this.parentElement.classList.toggle('done')"> Review {{ opportunities|length }} opportunit{{ 'y' if opportunities|length == 1 else 'ies' }} — check suggested offer prices</label>
+    {% endif %}
+    {% if near_misses %}
+    <label class="action-item"><input type="checkbox" onchange="this.parentElement.classList.toggle('done')"> Skim near misses for any worth watching ({{ near_misses|length }} properties)</label>
+    {% endif %}
+  </div>
+</div>
+
+{# ---- Favourites (always at top, open) ---- #}
+<details open id="sec-favourites">
+  <summary>Favourites <span class="count" id="fav-count">({{ favourites|length }})</span></summary>
+  <div class="cards" id="fav-cards">
+  {% for prop in favourites %}
+    {{ render_card(prop, "favourite", section_label="favourite") }}
+  {% endfor %}
+  </div>
+  <div class="empty-state" id="fav-empty"{% if favourites %} style="display:none"{% endif %}>No favourites yet. Click the star &#9734; on any card to save it here.</div>
+</details>
+
+{# ---- Viewings ---- #}
+<details open id="sec-viewings">
+  <summary>Viewings <span class="count" id="viewings-count">(0)</span></summary>
+  <div id="viewings-list" style="padding: 8px 0;"></div>
+  <div class="empty-state" id="viewings-empty">No viewings booked yet. Click 📅 Viewing on any card to schedule one.</div>
+</details>
+
+{# ---- Qualifying ---- #}
+<details open id="sec-qualifying">
+  <summary>Qualifying Properties <span class="count">({{ qualifying|length }})</span></summary>
+  <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">These properties pass <strong>every</strong> hard gate — budget, lease, EPC, service charge, location, crime, <strong>and monthly cost is within your GREEN target (≤£{{ config.monthly_target.min }}/mo housing)</strong>. Safe to enquire at asking price.</div>
+  <div class="excl-indicator" id="excl-indicator-qualifying" style="display:none;">
+    <span>⚠ <strong id="excl-count-qualifying">0</strong> qualifying properties hidden by exclude</span>
+    <button onclick="showExcludedInSection('sec-qualifying')">Show all</button>
+  </div>
+  {% if qualifying %}
+  <div class="cards">
+  {% for prop in qualifying %}
+    {{ render_card(prop, section_label="qualifying") }}
+  {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">No properties currently pass all hard gates.</div>
+  {% endif %}
+</details>
+
+{# ---- Opportunities (merged stretch + negotiation) ---- #}
+{% if opportunities %}
+<details {{ 'open' if opportunities|length <= 15 }} id="sec-opportunities">
+  <summary>Opportunities <span class="count">({{ opportunities|length }})</span></summary>
+  <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">Properties where a <strong>suggested offer would bring costs into your GREEN target</strong>. Sorted by: negotiation candidates first (only price gate fails), then stretch (over AMBER but offer works).</div>
+  {% if stretch_impact %}
+  <details style="margin: 8px 0;">
+    <summary style="font-size: 0.78rem; border: none; padding: 2px 0;">Monthly impact of +£5k/+£10k/+£15k</summary>
+    <table class="stretch-table">
+      <thead><tr><th>Base</th><th>+Amount</th><th>New Price</th><th class="num">Extra/mo</th></tr></thead>
+      <tbody>
+      {% for row in stretch_impact %}
+        <tr><td>{{ row.base_price|currency }}</td><td>+{{ row.increment|currency }}</td><td>{{ row.new_price|currency }}</td><td class="num">+£{{ row.extra_monthly|int }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+  <div class="cards">
+  {% for prop in opportunities %}
+    {{ render_card(prop, prop._opp_type or 'stretch', section_label=prop._opp_type or 'stretch') }}
+  {% endfor %}
+  </div>
+</details>
+{% endif %}
+
+{# ---- Near Misses ---- #}
+{% if near_misses %}
+<details id="sec-near-misses">
+  <summary>Near Misses — Failed 1-2 Gates <span class="count">({{ near_misses|length }})</span></summary>
+  <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">These fail 1–2 gates but a <strong>negotiated offer would bring them into budget</strong>. Review the gate failures on each card to decide if you can live with them.</div>
+  <div class="cards">
+  {% for prop in near_misses %}
+    {{ render_card(prop, "near-miss", section_label="near miss") }}
+  {% endfor %}
+  </div>
+</details>
+{% endif %}
+
+{# New Today: no longer a separate section — NEW badge appears on cards in each section #}
+
+{# ---- Area Performance ---- #}
+{% if area_stats %}
+<details open id="sec-areas">
+  <summary>Area Performance</summary>
+  <table class="area-table">
+    <thead>
+      <tr><th>Area</th><th class="num">Total</th><th class="num">Qual</th><th class="num">Avg Price</th><th class="num">Min</th><th class="num">Max</th><th class="num">Crime/mo</th><th class="num">Avg Days</th></tr>
+    </thead>
+    <tbody>
+    {% for area in area_stats %}
+      <tr>
+        <td>{{ area.area }}</td><td class="num">{{ area.total }}</td><td class="num">{{ area.qualifying }}</td>
+        <td class="num">{{ area.avg_price|currency }}</td><td class="num">{{ area.min_price|currency }}</td><td class="num">{{ area.max_price|currency }}</td>
+        <td class="num" {% if area.avg_crime is not none %}style="color: {% if area.avg_crime <= 10 %}var(--green){% elif area.avg_crime <= 20 %}var(--amber){% else %}var(--red){% endif %}"{% endif %}>{{ area.avg_crime if area.avg_crime is not none else '—' }}</td>
+        <td class="num">{{ area.avg_days_listed|int if area.avg_days_listed is not none else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+<div id="toast" class="toast"></div>
+<button id="back-to-top" onclick="window.scrollTo({top:0})" title="Back to top" style="position:fixed;bottom:20px;left:20px;width:36px;height:36px;border-radius:50%;background:var(--card);border:1px solid var(--border);color:var(--muted);font-size:1.1rem;cursor:pointer;z-index:100;opacity:0;transition:opacity 0.3s;display:flex;align-items:center;justify-content:center;">↑</button>
+<div id="lightbox" class="lightbox" onclick="closeLightbox()">
+  <button type="button" class="lightbox-close" onclick="closeLightbox()">✕</button>
+  <img id="lightbox-img" src="" alt="Floor plan">
+</div>
+
+<!-- Viewing modal -->
+<div id="viewing-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:400;align-items:center;justify-content:center;">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:24px 28px;min-width:340px;max-width:460px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.28);">
+    <h3 style="margin:0 0 4px;font-size:1rem;color:var(--text);">&#128197; Book a Viewing</h3>
+    <p id="viewing-modal-addr" style="margin:0 0 16px;font-size:0.8rem;color:var(--muted);"></p>
+    <input type="hidden" id="viewing-modal-prop-id">
+    <input type="hidden" id="viewing-modal-edit-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:3px;">Date</label>
+        <input type="date" id="viewing-date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:0.85rem;">
+      </div>
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:3px;">Time</label>
+        <input type="time" id="viewing-time" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:0.85rem;">
+      </div>
+    </div>
+    <div style="margin-bottom:10px;">
+      <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:3px;">Status</label>
+      <select id="viewing-status" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:0.85rem;">
+        <option value="scheduled">Scheduled</option>
+        <option value="completed">Completed ✓</option>
+        <option value="cancelled">Cancelled ✗</option>
+      </select>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:3px;">Notes</label>
+      <textarea id="viewing-notes" rows="2" placeholder="e.g. Ask about boiler age, parking..." style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:0.85rem;resize:vertical;"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button onclick="closeViewingModal()" style="padding:7px 16px;border:1px solid var(--border);border-radius:5px;background:none;color:var(--muted);cursor:pointer;font-size:0.85rem;">Cancel</button>
+      <button onclick="saveViewing()" style="padding:7px 16px;border:none;border-radius:5px;background:var(--accent);color:#fff;cursor:pointer;font-size:0.85rem;font-weight:600;">Save Viewing</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Carousel
+function carouselScroll(id, dir) {
+  const track = document.querySelector('#' + id + ' .carousel-track');
+  if (!track) return;
+  const w = track.offsetWidth;
+  track.scrollBy({ left: dir * w, behavior: 'smooth' });
+  // Update counter
+  setTimeout(() => {
+    const counter = document.querySelector('#' + id + ' .carousel-counter');
+    if (counter) {
+      const idx = Math.round(track.scrollLeft / w) + 1;
+      const total = track.children.length;
+      counter.textContent = idx + ' / ' + total;
+    }
+  }, 350);
+}
+
+// ------------------------------------------------------------------
+// State: persisted in localStorage. Works with file:// (no server).
+// Also syncs to DB when served via python -m src serve.
+// ------------------------------------------------------------------
+const LS_KEY = 'property-tool-state';
+
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {favs:[], excl:[]}; }
+  catch(e) { return {favs:[], excl:[]}; }
+}
+function saveState(s) { localStorage.setItem(LS_KEY, JSON.stringify(s)); }
+
+function dismissNew(id) {
+  const badge = document.getElementById('new-badge-' + id);
+  if (badge) badge.classList.add('dismissed');
+  const s = loadState();
+  if (!s.new_dismissed) s.new_dismissed = [];
+  if (!s.new_dismissed.includes(id)) s.new_dismissed.push(id);
+  saveState(s);
+}
+
+function applyStoredState() {
+  const s = loadState();
+  const favCards = document.getElementById('fav-cards');
+  const favEmpty  = document.getElementById('fav-empty');
+  const favCount  = document.getElementById('fav-count');
+
+  // Restore dismissed NEW badges
+  (s.new_dismissed || []).forEach(id => {
+    const badge = document.getElementById('new-badge-' + id);
+    if (badge) badge.classList.add('dismissed');
+  });
+
+  s.favs.forEach(id => {
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    const btn = card.querySelectorAll('.action-btn')[0];
+    if (btn) { btn.classList.add('fav-active'); btn.innerHTML = '&#9733;'; btn.title = 'Remove from favourites'; }
+    card.classList.add('favourite');
+    // Move to favourites section if not already there
+    if (favCards && !card.closest('#sec-favourites')) {
+      if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+      favCards.prepend(card);
+    }
+  });
+
+  // Sync empty-state and count
+  if (favCards) {
+    const n = favCards.querySelectorAll('.property-card').length;
+    if (favEmpty) favEmpty.style.display = n > 0 ? 'none' : '';
+    if (favCount) favCount.textContent = `(${n})`;
+  }
+
+  s.excl.forEach(id => {
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    const btn = card.querySelectorAll('.action-btn')[1];
+    if (btn) btn.classList.add('excl-active');
+    card.style.display = 'none';
+  });
+}
+document.addEventListener('DOMContentLoaded', applyStoredState);
+
+// Reset filters on fresh page load (prevent browser autocomplete restoring old filter values)
+document.addEventListener('DOMContentLoaded', function() {
+  clearFilters();
+  updateExcludeIndicators();
+  // Backup: catch late browser autocomplete that fires after DOMContentLoaded
+  setTimeout(function() { clearFilters(); updateExcludeIndicators(); }, 150);
+});
+
+function updateExcludeIndicators() {
+  // Show per-section "X hidden" banners for excluded cards
+  ['qualifying', 'opportunities', 'near-misses'].forEach(sec => {
+    const section = document.getElementById('sec-' + sec);
+    if (!section) return;
+    const hidden = section.querySelectorAll('.property-card .action-btn.excl-active').length;
+    const indicator = document.getElementById('excl-indicator-' + sec.replace('-', ''));
+    if (!indicator) return;
+    if (hidden > 0) {
+      indicator.style.display = '';
+      const countEl = document.getElementById('excl-count-' + sec.replace('-', ''));
+      if (countEl) countEl.textContent = hidden;
+    } else {
+      indicator.style.display = 'none';
+    }
+  });
+}
+
+function showExcludedInSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+  const s = loadState();
+  section.querySelectorAll('.property-card').forEach(card => {
+    const btn = card.querySelectorAll('.action-btn')[1];
+    if (btn && btn.classList.contains('excl-active')) {
+      btn.classList.remove('excl-active');
+      card.style.display = '';
+      const id = parseInt(card.dataset.id);
+      const idx = s.excl.indexOf(id);
+      if (idx !== -1) s.excl.splice(idx, 1);
+      // Sync to server
+      if (location.protocol !== 'file:') {
+        fetch('/api/unexclude/' + id, {method:'POST'}).catch(()=>{});
+      }
+    }
+  });
+  saveState(s);
+  updateExcludeIndicators();
+  showToast('All properties in section restored');
+}
+
+// Toast
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function reloadReport() {
+  if (location.protocol !== 'file:') {
+    showToast('Regenerating report\u2026');
+    fetch('/api/regenerate', {method: 'POST'})
+      .then(r => r.json())
+      .then(d => { showToast('Done \u2014 reloading\u2026'); setTimeout(() => location.reload(), 800); })
+      .catch(() => { showToast('Reloading\u2026'); setTimeout(() => location.reload(), 400); });
+  } else {
+    location.reload();
+  }
+}
+
+function toggleFavourite(evt, id) {
+  const card = evt.target.closest('.property-card');
+  const btn  = card.querySelectorAll('.action-btn')[0];
+  const s    = loadState();
+  const idx  = s.favs.indexOf(id);
+  const favCards = document.getElementById('fav-cards');
+  const favEmpty  = document.getElementById('fav-empty');
+  const favCount  = document.getElementById('fav-count');
+
+  if (idx === -1) {
+    s.favs.push(id);
+    btn.classList.add('fav-active'); btn.innerHTML = '&#9733;'; btn.title = 'Remove from favourites';
+    card.classList.add('favourite');
+    if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+    if (favCards && !card.closest('#sec-favourites')) favCards.prepend(card);
+    if (favEmpty) favEmpty.style.display = 'none';
+    if (favCount) favCount.textContent = `(${favCards?.querySelectorAll('.property-card').length || 0})`;
+    showToast('\u2605 Added to favourites');
+  } else {
+    s.favs.splice(idx, 1);
+    btn.classList.remove('fav-active'); btn.innerHTML = '&#9734;'; btn.title = 'Add to favourites';
+    card.classList.remove('favourite');
+    const srcId = card.dataset.srcSection;
+    if (srcId && document.getElementById(srcId)) {
+      const srcCards = document.getElementById(srcId).querySelector('.cards');
+      if (srcCards) srcCards.appendChild(card);
+    }
+    const n = favCards?.querySelectorAll('.property-card').length || 0;
+    if (favEmpty) favEmpty.style.display = n === 0 ? '' : 'none';
+    if (favCount) favCount.textContent = `(${n})`;
+    showToast('Removed from favourites');
+  }
+  saveState(s);
+  if (location.protocol !== 'file:')
+    fetch('/api/favourite/' + id, {method:'POST'}).catch(()=>{});
+}
+
+function toggleExclude(id) {
+  const card = document.getElementById('card-' + id);
+  const btn = card.querySelectorAll('.action-btn')[1];
+  const s = loadState();
+  const idx = s.excl.indexOf(id);
+  if (idx === -1) {
+    s.excl.push(id);
+    btn.classList.add('excl-active');
+    card.style.display = 'none';
+    showToast('Hidden — excluded from future reports');
+  } else {
+    s.excl.splice(idx, 1);
+    btn.classList.remove('excl-active');
+    card.style.display = '';
+    showToast('Restored to report');
+  }
+  saveState(s);
+  if (location.protocol !== 'file:') {
+    const ep = idx === -1 ? '/api/exclude/' : '/api/unexclude/';
+    fetch(ep + id, {method:'POST'}).catch(()=>{});
+  }
+}
+
+// Notes + Tracking
+function saveNote(id, text) {
+  // localStorage fallback
+  const s = loadState();
+  s.notes = s.notes || {};
+  s.notes[id] = text;
+  saveState(s);
+  // Server sync
+  if (location.protocol !== 'file:') {
+    fetch('/api/note/' + id, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: text})
+    }).catch(()=>{});
+  }
+  const badge = document.getElementById('note-saved-' + id);
+  if (badge) { badge.classList.add('show'); setTimeout(() => badge.classList.remove('show'), 1500); }
+}
+
+function saveTracking(id, status) {
+  const s = loadState();
+  s.trackings = s.trackings || {};
+  s.trackings[id] = status;
+  saveState(s);
+  if (location.protocol !== 'file:') {
+    fetch('/api/tracking/' + id, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({status: status})
+    }).catch(()=>{});
+  }
+  showToast('Status → ' + status.replace(/_/g, ' '));
+}
+
+function loadNotesAndTrackings() {
+  const s = loadState();
+  // Restore from localStorage first
+  if (s.notes) {
+    Object.entries(s.notes).forEach(([id, text]) => {
+      const el = document.getElementById('note-' + id);
+      if (el && text) el.value = text;
+    });
+  }
+  if (s.trackings) {
+    Object.entries(s.trackings).forEach(([id, status]) => {
+      const el = document.getElementById('tracking-' + id);
+      if (el && status) el.value = status;
+    });
+  }
+  // Server sync (overrides localStorage if available)
+  if (location.protocol !== 'file:') {
+    fetch('/api/notes').then(r => r.json()).then(data => {
+      if (data.notes) {
+        Object.entries(data.notes).forEach(([id, text]) => {
+          const el = document.getElementById('note-' + id);
+          if (el && text) el.value = text;
+          s.notes = s.notes || {};
+          s.notes[id] = text;
+        });
+        saveState(s);
+      }
+    }).catch(()=>{});
+    fetch('/api/trackings').then(r => r.json()).then(data => {
+      if (data.trackings) {
+        Object.entries(data.trackings).forEach(([id, status]) => {
+          const el = document.getElementById('tracking-' + id);
+          if (el && status) el.value = status;
+          s.trackings = s.trackings || {};
+          s.trackings[id] = status;
+        });
+        saveState(s);
+      }
+    }).catch(()=>{});
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadNotesAndTrackings);
+
+// Enquiry — open Rightmove contact form + copy message to clipboard
+function _weekendDates() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 6=Sat
+  const daysToSat = day === 6 ? 7 : (6 - day); // if already Sat, get next Sat
+  const sat = new Date(now); sat.setDate(now.getDate() + daysToSat);
+  const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
+  const fmt = d => d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  return { sat: fmt(sat), sun: fmt(sun) };
+}
+
+function sendEnquiry(dbId, portalId, address, agent, url, price) {
+  const priceFormatted = '£' + parseInt(price).toLocaleString();
+  const userName   = document.getElementById('cfg-user-name').value     || localStorage.getItem('cfg-user-name')     || '';
+  const userEmail  = document.getElementById('cfg-user-email').value    || localStorage.getItem('cfg-user-email')    || '';
+  const userPhone  = document.getElementById('cfg-user-phone').value    || localStorage.getItem('cfg-user-phone')    || '';
+  const userPostcode = document.getElementById('cfg-user-postcode').value || localStorage.getItem('cfg-user-postcode') || '';
+
+  // Save contact details for future use
+  if (userName)     localStorage.setItem('cfg-user-name', userName);
+  if (userEmail)    localStorage.setItem('cfg-user-email', userEmail);
+  if (userPhone)    localStorage.setItem('cfg-user-phone', userPhone);
+  if (userPostcode) localStorage.setItem('cfg-user-postcode', userPostcode);
+
+  const { sat, sun } = _weekendDates();
+
+  const message = `Dear ${agent},
+
+I am writing to enquire about the property listed at ${address} (${priceFormatted}).
+
+${url}
+
+I am a first-time buyer with a mortgage agreement in principle and a deposit ready. I would love to arrange a viewing this weekend — I am available on ${sat} or ${sun} and would be grateful if you could confirm a convenient time.
+
+Could you please also let me know:
+1. Whether there has been any interest or offers on the property
+2. Any additional information about the property not covered in the listing
+
+I look forward to hearing from you.
+
+Kind regards${userName ? '\n' + userName : ''}${userPhone ? '\nTel: ' + userPhone : ''}${userEmail ? '\n' + userEmail : ''}`;
+
+  // If running via server, auto-fill the Rightmove form via Playwright
+  if (location.protocol !== 'file:' && dbId) {
+    showToast('Opening Rightmove form and filling your details…');
+    fetch('/api/enquiry/' + dbId, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => showToast(d.message || 'Form opened — solve the CAPTCHA and click Send!'))
+      .catch(() => _fallbackEnquiry(portalId, message));
+    // Auto-set status to Contacted
+    saveTracking(dbId, 'contacted');
+    const sel = document.getElementById('tracking-' + dbId);
+    if (sel) sel.value = 'contacted';
+    return;
+  }
+  _fallbackEnquiry(portalId, message);
+  // Auto-set status to Contacted
+  if (dbId) {
+    saveTracking(dbId, 'contacted');
+    const sel = document.getElementById('tracking-' + dbId);
+    if (sel) sel.value = 'contacted';
+  }
+}
+
+function _fallbackEnquiry(portalId, message) {
+  // Copy message to clipboard so user can paste into Rightmove's form
+  navigator.clipboard.writeText(message).then(() => {}).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = message;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+
+  // Open Rightmove's contact form for this property
+  if (portalId) {
+    window.open('https://www.rightmove.co.uk/property-for-sale/contactBranch.html?propertyId=' + portalId, '_blank');
+    showToast('Rightmove contact form opened — message copied to clipboard, paste it in!');
+  } else {
+    showToast('Message copied to clipboard');
+  }
+}
+
+// ------------------------------------------------------------------
+// Lightbox
+// ------------------------------------------------------------------
+function openLightbox(url) {
+  const lb = document.getElementById('lightbox');
+  document.getElementById('lightbox-img').src = url;
+  lb.classList.add('open');
+  event.stopPropagation();
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+// ------------------------------------------------------------------
+// Filters
+// ------------------------------------------------------------------
+const EPC_ORDER = ['A','B','C','D','E','F','G'];
+const CT_ORDER  = ['A','B','C','D','E','F','G','H'];
+
+function applyFilters() {
+  const search     = (document.getElementById('filter-search').value || '').toLowerCase();
+  const tenure     = document.getElementById('filter-tenure').value;
+  const minBeds    = parseInt(document.getElementById('filter-beds').value) || 0;
+  const minEpc     = document.getElementById('filter-epc').value;
+  const maxCt      = document.getElementById('filter-ct').value;
+  const filterArea = document.getElementById('filter-area').value;
+  const minScore   = parseFloat(document.getElementById('filter-score').value) || 0;
+  const maxMo      = parseFloat(document.getElementById('filter-monthly').value) || Infinity;
+
+  let visible = 0;
+  document.querySelectorAll('.property-card').forEach(card => {
+    // Never show excluded cards
+    if (card.querySelector('.action-btn.excl-active')) { card.style.display = 'none'; return; }
+
+    const addr    = card.dataset.address || '';
+    const cTenure = card.dataset.tenure || '';
+    const beds    = parseInt(card.dataset.beds) || 0;
+    const epc     = card.dataset.epc || '';
+    const ct      = card.dataset.ct || '';
+    const area    = card.dataset.area || '';
+    const score   = parseFloat(card.dataset.score) || 0;
+    const monthly = parseFloat(card.dataset.monthly) || 0;
+
+    let show = true;
+    if (search     && !addr.includes(search))       show = false;
+    if (tenure     && cTenure !== tenure)            show = false;
+    if (minBeds    && beds < minBeds)                show = false;
+    if (minEpc     && epc && EPC_ORDER.indexOf(epc) > EPC_ORDER.indexOf(minEpc)) show = false;
+    if (maxCt      && ct  && CT_ORDER.indexOf(ct)  > CT_ORDER.indexOf(maxCt))   show = false;
+    if (filterArea && area !== filterArea)           show = false;
+    if (minScore   && score < minScore)              show = false;
+    if (maxMo < Infinity && monthly > maxMo)         show = false;
+
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  const countEl = document.getElementById('filter-count');
+  const total = document.querySelectorAll('.property-card:not(:has(.action-btn.excl-active))').length;
+  countEl.textContent = (visible < total) ? `Showing ${visible} of ${total}` : '';
+}
+
+function clearFilters() {
+  ['filter-search','filter-score','filter-monthly'].forEach(id => document.getElementById(id).value = '');
+  ['filter-tenure','filter-beds','filter-epc','filter-ct','filter-area','filter-sort'].forEach(id => document.getElementById(id).value = id === 'filter-sort' ? 'score-desc' : '');
+  document.querySelectorAll('.property-card').forEach(c => {
+    // Respect excluded state
+    if (!c.querySelector('.action-btn.excl-active')) c.style.display = '';
+  });
+  document.getElementById('filter-count').textContent = '';
+}
+
+function sortCards(val) {
+  document.querySelectorAll('.cards').forEach(container => {
+    const cards = Array.from(container.querySelectorAll('.property-card'));
+    cards.sort((a, b) => {
+      switch (val) {
+        case 'score-desc':    return (parseFloat(b.dataset.score)||0) - (parseFloat(a.dataset.score)||0);
+        case 'price-asc':     return (parseInt(a.dataset.price)||0) - (parseInt(b.dataset.price)||0);
+        case 'price-desc':    return (parseInt(b.dataset.price)||0) - (parseInt(a.dataset.price)||0);
+        case 'monthly-asc':   return (parseFloat(a.dataset.monthly)||0) - (parseFloat(b.dataset.monthly)||0);
+        case 'dom-desc':      return (parseInt(b.dataset.dom)||0) - (parseInt(a.dataset.dom)||0);
+        case 'station-asc':   return (parseInt(a.dataset.stationWalk)||999) - (parseInt(b.dataset.stationWalk)||999);
+        case 'commute-asc':   return (parseInt(a.dataset.commuteLondon)||999) - (parseInt(b.dataset.commuteLondon)||999);
+        case 'newest':        return (parseInt(b.dataset.dom)||0) < (parseInt(a.dataset.dom)||0) ? 1 : -1;
+        default: return 0;
+      }
+    });
+    cards.forEach(c => container.appendChild(c));
+  });
+}
+
+// ------------------------------------------------------------------
+// Settings / criteria panel
+// ------------------------------------------------------------------
+const SETTINGS_KEY = 'property-tool-criteria';
+const DEFAULTS = {
+  deposit:      {{ config.user.deposit }},
+  rate:         {{ config.user.mortgage_rate }},
+  term:         {{ config.user.mortgage_term_years }},
+  monthlyMin:   {{ config.monthly_target.min }},
+  monthlyMax:   {{ config.monthly_target.max }},
+  freeholdMax:  {{ config.budget.freehold.absolute_max | default(200000) }},
+  leaseholdMax: {{ config.budget.leasehold.absolute_max | default(180000) }},
+  scMax:        {{ config.hard_gates.service_charge_max_pa | default(1500) }},
+  grMax:        {{ config.hard_gates.ground_rent_max_pa | default(250) }},
+  leaseMin:     {{ config.hard_gates.lease_minimum_years | default(120) }},
+  stationWalk:  {{ config.hard_gates.station_max_walk_min | default(25) }},
+  superWalk:    {{ config.hard_gates.supermarket_max_walk_min | default(25) }},
+  takeHome:     {{ config.user.monthly_take_home | default(2650) }},
+  bills:        {{ config.estimated_bills.total_monthly | default(211) }},
+  ctMaxBand:    '{{ config.hard_gates.council_tax_max_band | default("C") }}',
+  epcMin:       '{{ config.hard_gates.epc_minimum_rating | default("C") }}',
+  crimeAsb:     {{ config.crime_thresholds.asb_monthly_max | default(15) }},
+  crimeBurglary:{{ config.crime_thresholds.burglary_monthly_max | default(5) }},
+  crimeDrugs:   {{ config.crime_thresholds.drugs_monthly_max | default(5) }},
+  crimeViolent: {{ config.crime_thresholds.violent_monthly_max | default(10) }},
+  floodZone:    {{ config.hard_gates.flood_zone_reject | default(3) }},
+};
+
+function loadSettings() {
+  try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY))); }
+  catch(e) { return Object.assign({}, DEFAULTS); }
+}
+function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+
+function populateSettingsFields() {
+  const s = loadSettings();
+  document.getElementById('cfg-deposit').value      = s.deposit;
+  document.getElementById('cfg-rate').value         = s.rate;
+  document.getElementById('cfg-term').value         = s.term;
+  document.getElementById('cfg-monthly-min').value  = s.monthlyMin;
+  document.getElementById('cfg-monthly-max').value  = s.monthlyMax;
+  document.getElementById('cfg-freehold-max').value = s.freeholdMax;
+  document.getElementById('cfg-leasehold-max').value= s.leaseholdMax;
+  document.getElementById('cfg-sc-max').value       = s.scMax;
+  document.getElementById('cfg-gr-max').value       = s.grMax;
+  document.getElementById('cfg-lease-min').value    = s.leaseMin;
+  document.getElementById('cfg-station-walk').value = s.stationWalk;
+  document.getElementById('cfg-super-walk').value   = s.superWalk;
+  document.getElementById('cfg-take-home').value     = s.takeHome;
+  document.getElementById('cfg-bills').value         = s.bills;
+  document.getElementById('cfg-ct-band').value       = s.ctMaxBand;
+  document.getElementById('cfg-epc-min').value        = s.epcMin;
+  document.getElementById('cfg-crime-asb').value     = s.crimeAsb;
+  document.getElementById('cfg-crime-burglary').value= s.crimeBurglary;
+  document.getElementById('cfg-crime-drugs').value   = s.crimeDrugs;
+  document.getElementById('cfg-crime-violent').value  = s.crimeViolent;
+  document.getElementById('cfg-flood-zone').value    = s.floodZone;
+
+  // Contact details (stored separately in localStorage)
+  document.getElementById('cfg-user-name').value    = localStorage.getItem('cfg-user-name')     || '{{ config.user.name | default("") }}';
+  document.getElementById('cfg-user-email').value   = localStorage.getItem('cfg-user-email')    || '{{ config.user.email | default("") }}';
+  document.getElementById('cfg-user-phone').value   = localStorage.getItem('cfg-user-phone')    || '{{ config.user.phone | default("") }}';
+  document.getElementById('cfg-user-postcode').value = localStorage.getItem('cfg-user-postcode') || '{{ config.user.postcode | default("") }}';
+}
+
+function calcMortgage(price, deposit, ratePercent, termYears) {
+  const principal = price - deposit;
+  if (principal <= 0) return 0;
+  const r = (ratePercent / 100) / 12;
+  const n = termYears * 12;
+  if (r === 0) return principal / n;
+  return principal * (r * Math.pow(1+r, n)) / (Math.pow(1+r, n) - 1);
+}
+
+function applySettings() {
+  const s = {
+    deposit:      parseFloat(document.getElementById('cfg-deposit').value)       || DEFAULTS.deposit,
+    rate:         parseFloat(document.getElementById('cfg-rate').value)          || DEFAULTS.rate,
+    term:         parseFloat(document.getElementById('cfg-term').value)          || DEFAULTS.term,
+    monthlyMin:   parseFloat(document.getElementById('cfg-monthly-min').value)   || DEFAULTS.monthlyMin,
+    monthlyMax:   parseFloat(document.getElementById('cfg-monthly-max').value)   || DEFAULTS.monthlyMax,
+    freeholdMax:  parseFloat(document.getElementById('cfg-freehold-max').value)  || DEFAULTS.freeholdMax,
+    leaseholdMax: parseFloat(document.getElementById('cfg-leasehold-max').value) || DEFAULTS.leaseholdMax,
+    scMax:        parseFloat(document.getElementById('cfg-sc-max').value)        || DEFAULTS.scMax,
+    grMax:        parseFloat(document.getElementById('cfg-gr-max').value)        || DEFAULTS.grMax,
+    leaseMin:     parseFloat(document.getElementById('cfg-lease-min').value)     || DEFAULTS.leaseMin,
+    stationWalk:  parseFloat(document.getElementById('cfg-station-walk').value)  || DEFAULTS.stationWalk,
+    superWalk:    parseFloat(document.getElementById('cfg-super-walk').value)    || DEFAULTS.superWalk,
+    takeHome:     parseFloat(document.getElementById('cfg-take-home').value)     || DEFAULTS.takeHome,
+    bills:        parseFloat(document.getElementById('cfg-bills').value)         || DEFAULTS.bills,
+    ctMaxBand:    document.getElementById('cfg-ct-band').value                   || DEFAULTS.ctMaxBand,
+    epcMin:       document.getElementById('cfg-epc-min').value                    || DEFAULTS.epcMin,
+    crimeAsb:     parseFloat(document.getElementById('cfg-crime-asb').value)     || DEFAULTS.crimeAsb,
+    crimeBurglary:parseFloat(document.getElementById('cfg-crime-burglary').value)|| DEFAULTS.crimeBurglary,
+    crimeDrugs:   parseFloat(document.getElementById('cfg-crime-drugs').value)   || DEFAULTS.crimeDrugs,
+    crimeViolent: parseFloat(document.getElementById('cfg-crime-violent').value) || DEFAULTS.crimeViolent,
+    floodZone:    parseFloat(document.getElementById('cfg-flood-zone').value)    || DEFAULTS.floodZone,
+  };
+  saveSettings(s);
+
+  // Recalculate cost bars for all cards
+  document.querySelectorAll('.property-card').forEach(card => {
+    const price = parseInt(card.dataset.price) || 0;
+    if (!price) return;
+    const scAnnual = parseFloat(card.dataset.sc) || 0;
+    const grAnnual = parseFloat(card.dataset.gr) || 0;
+    const ctMonthly = parseFloat(card.dataset.ctMonthly) || 0;
+    const mtg = calcMortgage(price, s.deposit, s.rate, s.term);
+    const housing = mtg + scAnnual/12 + grAnnual/12 + ctMonthly;
+    const allIn = housing + s.bills;
+
+    const totalEl = card.querySelector('.cost-bar .total');
+    if (totalEl) totalEl.textContent = 'All-in: £' + Math.round(allIn) + '/mo';
+
+    const pctEl = card.querySelector('.cost-bar .pct');
+    if (pctEl) pctEl.textContent = (allIn / s.takeHome * 100).toFixed(1) + '%';
+
+    // Update inline breakdown
+    const inlineEl = card.querySelector('.cost-breakdown-inline');
+    if (inlineEl) {
+      let parts = ['mtg £' + Math.round(mtg)];
+      if (scAnnual > 0) parts.push('SC £' + Math.round(scAnnual / 12));
+      if (grAnnual > 0) parts.push('GR £' + Math.round(grAnnual / 12));
+      if (ctMonthly > 0) parts.push('CT £' + Math.round(ctMonthly));
+      parts.push('bills £' + Math.round(s.bills));
+      inlineEl.textContent = parts.join(' · ');
+    }
+
+    const cb = card.querySelector('.cost-bar');
+    if (cb) {
+      cb.classList.remove('green','amber','red');
+      // Match Python: compare allIn vs (monthlyMin + bills) / (monthlyMax + bills)
+      if (allIn <= s.monthlyMin + s.bills) cb.classList.add('green');
+      else if (allIn <= s.monthlyMax + s.bills) cb.classList.add('amber');
+      else cb.classList.add('red');
+    }
+
+    // Update data-monthly for filter (all-in, not housing)
+    card.dataset.monthly = Math.round(allIn);
+  });
+
+  showToast('Criteria updated — cost bars recalculated');
+  applyFilters();
+}
+
+function resetSettings() {
+  localStorage.removeItem(SETTINGS_KEY);
+  populateSettingsFields();
+  showToast('Reset to original criteria');
+}
+
+function runStressTest() {
+  const s = loadSettings();
+  const rates = [s.rate, s.rate + 1, s.rate + 2, s.rate + 3];
+  const results = document.getElementById('stress-test-results');
+  let html = '<strong>Mortgage Stress Test</strong><br>';
+  html += '<table style="width:100%;font-size:0.72rem;margin-top:4px;border-collapse:collapse;">';
+  html += '<tr><th style="text-align:left;padding:3px;">Rate</th><th>Avg Qualifying</th><th>Most Expensive</th><th>Cheapest</th></tr>';
+
+  const cards = Array.from(document.querySelectorAll('.property-card')).filter(c => c.style.display !== 'none');
+  const prices = cards.map(c => parseInt(c.dataset.price) || 0).filter(p => p > 0);
+  if (!prices.length) { results.innerHTML = 'No visible properties to test.'; results.style.display = 'block'; return; }
+
+  const avgPrice = prices.reduce((a,b) => a+b, 0) / prices.length;
+  const maxPrice = Math.max(...prices);
+  const minPrice = Math.min(...prices);
+
+  rates.forEach(rate => {
+    const avgMtg = calcMortgage(avgPrice, s.deposit, rate, s.term);
+    const maxMtg = calcMortgage(maxPrice, s.deposit, rate, s.term);
+    const minMtg = calcMortgage(minPrice, s.deposit, rate, s.term);
+    const avgAllIn = avgMtg + s.bills;
+    const maxAllIn = maxMtg + s.bills;
+    const minAllIn = minMtg + s.bills;
+    const pctClass = (allIn) => allIn / s.takeHome > 0.4 ? 'color:var(--red)' : allIn / s.takeHome > 0.33 ? 'color:var(--amber)' : 'color:var(--green)';
+    html += '<tr><td style="padding:3px;">' + rate.toFixed(1) + '%' + (rate === s.rate ? ' (current)' : '') + '</td>';
+    html += '<td style="padding:3px;' + pctClass(avgAllIn) + '">\u00a3' + Math.round(avgAllIn) + '/mo (' + (avgAllIn/s.takeHome*100).toFixed(1) + '%)</td>';
+    html += '<td style="padding:3px;' + pctClass(maxAllIn) + '">\u00a3' + Math.round(maxAllIn) + '/mo (' + (maxAllIn/s.takeHome*100).toFixed(1) + '%)</td>';
+    html += '<td style="padding:3px;' + pctClass(minAllIn) + '">\u00a3' + Math.round(minAllIn) + '/mo (' + (minAllIn/s.takeHome*100).toFixed(1) + '%)</td></tr>';
+  });
+  html += '</table>';
+  results.innerHTML = html;
+  results.style.display = 'block';
+}
+
+document.addEventListener('DOMContentLoaded', populateSettingsFields);
+
+// Auto-save contact details on change
+['cfg-user-name', 'cfg-user-email', 'cfg-user-phone', 'cfg-user-postcode'].forEach(function(id) {
+  document.getElementById(id).addEventListener('change', function() {
+    localStorage.setItem(id, this.value);
+  });
+});
+
+// Back-to-top button visibility
+window.addEventListener('scroll', function() {
+  const btn = document.getElementById('back-to-top');
+  btn.style.opacity = window.scrollY > 400 ? '1' : '0';
+  btn.style.pointerEvents = window.scrollY > 400 ? 'auto' : 'none';
+});
+
+// Fix lazy images inside <details> — browsers don't load them when the section is collapsed
+document.querySelectorAll('details').forEach(det => {
+  det.addEventListener('toggle', () => {
+    if (det.open) {
+      det.querySelectorAll('img[loading="lazy"]').forEach(img => { img.loading = 'eager'; });
+    }
+  });
+});
+
+// Fix lazy images inside <details> — browsers don't always load them when the section is collapsed
+document.querySelectorAll('details').forEach(det => {
+  det.addEventListener('toggle', () => {
+    if (det.open) {
+      det.querySelectorAll('img[loading="lazy"]').forEach(img => { img.loading = 'eager'; });
+    }
+  });
+});
+
+// Nav highlight
+(function() {
+  const sections = document.querySelectorAll('details[id]');
+  const navLinks = document.querySelectorAll('.nav a[href^="#"]');
+  if (!sections.length || !navLinks.length) return;
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      const link = document.querySelector('.nav a[href="#' + e.target.id + '"]');
+      if (link) link.classList.toggle('active', e.isIntersecting);
+    });
+  }, { rootMargin: '-80px 0px -60% 0px' });
+  sections.forEach(s => obs.observe(s));
+})();
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+  // Skip if user is typing in an input/textarea
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  switch(e.key) {
+    case '/': e.preventDefault(); document.getElementById('filter-search').focus(); break;
+    case 's': document.getElementById('settings-drawer').open = !document.getElementById('settings-drawer').open; break;
+    case 'c': clearFilters(); break;
+    case 'e': exportCSV(); break;
+    case 'Escape':
+      const lb = document.getElementById('lightbox');
+      if (lb.classList.contains('open')) lb.classList.remove('open');
+      else document.activeElement.blur();
+      break;
+  }
+});
+
+// CSV Export
+function exportCSV() {
+  const headers = ['ID','Address','Price','Monthly','Score','Beds','Tenure','CT Band','EPC','Days Listed','Station Walk','Agent','URL'];
+  const rows = [headers.join(',')];
+  document.querySelectorAll('.property-card').forEach(card => {
+    if (card.style.display === 'none') return;
+    const id = card.dataset.id;
+    const addr = (card.dataset.address || '').replace(/,/g, ';');
+    const price = card.dataset.price;
+    const monthly = card.dataset.monthly;
+    const score = card.dataset.score;
+    const beds = card.dataset.beds;
+    const tenure = card.dataset.tenure;
+    const ct = card.dataset.ct;
+    const epc = card.dataset.epc;
+    const dom = card.dataset.dom;
+    const stWalk = card.dataset.stationWalk;
+    const link = card.querySelector('.card-footer a[target="_blank"]');
+    const url = link ? link.href : '';
+    const agentEl = card.querySelector('.card-footer span');
+    const agent = agentEl ? agentEl.textContent.split(' \u00b7 ')[0].trim().replace(/,/g, ';') : '';
+    rows.push([id, '"'+addr+'"', price, monthly, score, beds, tenure, ct, epc, dom, stWalk, '"'+agent+'"', url].join(','));
+  });
+  const blob = new Blob([rows.join('\n')], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'properties_export.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('CSV exported');
+}
+
+// Table view
+function toggleTableView() {
+  const isTable = document.body.classList.toggle('view-table');
+  document.body.classList.remove('view-map');
+  document.getElementById('map-toggle-btn').textContent = '\ud83d\udccd Map';
+  document.getElementById('view-toggle-btn').textContent = isTable ? '\u25a6 Cards' : '\u2261 Table';
+  if (isTable) buildTableView();
+}
+
+function buildTableView() {
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+  const s = loadState();
+  document.querySelectorAll('.property-card').forEach(card => {
+    if (card.style.display === 'none') return;
+    const id = card.dataset.id;
+    const addr = card.dataset.address || '';
+    const price = parseInt(card.dataset.price) || 0;
+    const monthly = parseInt(card.dataset.monthly) || 0;
+    const score = parseFloat(card.dataset.score) || 0;
+    const beds = card.dataset.beds || '-';
+    const tenure = card.dataset.tenure || '-';
+    const ct = card.dataset.ct || '-';
+    const stWalk = card.dataset.stationWalk;
+    const dom = card.dataset.dom || '-';
+    const link = card.querySelector('.card-footer a[target="_blank"]');
+    const url = link ? link.href : '#';
+    const trackingStatus = (s.trackings && s.trackings[id]) || 'new';
+
+    const scoreClass = score >= 70 ? 'high' : score >= 50 ? 'medium' : 'low';
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + addr + '</td><td>\u00a3' + price.toLocaleString() + '</td><td>\u00a3' + monthly + '/mo</td><td class="score-cell ' + scoreClass + '">' + score + '</td><td>' + beds + '</td><td>' + tenure + '</td><td>' + ct + '</td><td>' + (stWalk === '999' ? '-' : stWalk + 'min') + '</td><td>' + dom + 'd</td><td>' + trackingStatus.replace(/_/g, ' ') + '</td><td><a href="' + url + '" target="_blank">View</a></td>';
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', function(e) {
+      if (e.target.tagName === 'A') return;
+      const cardEl = document.getElementById('card-' + id);
+      if (cardEl) { document.body.classList.remove('view-table'); document.body.classList.remove('view-map'); document.getElementById('view-toggle-btn').textContent = '\u2261 Table'; document.getElementById('map-toggle-btn').textContent = '\ud83d\udccd Map'; cardEl.scrollIntoView({behavior:'smooth', block:'center'}); cardEl.style.outline = '2px solid var(--accent)'; setTimeout(function() { cardEl.style.outline = ''; }, 2000); }
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+// Map view
+let mapInstance = null;
+let mapMarkers = [];
+
+function toggleMapView() {
+  const isMap = document.body.classList.toggle('view-map');
+  document.body.classList.remove('view-table');
+  document.getElementById('view-toggle-btn').textContent = '\u2261 Table';
+  document.getElementById('map-toggle-btn').textContent = isMap ? '\u25a6 Cards' : '\ud83d\udccd Map';
+  if (isMap) buildMapView();
+}
+
+function buildMapView() {
+  const container = document.getElementById('map-container');
+  if (!mapInstance) {
+    mapInstance = L.map('map-container').setView([51.3, 0.5], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 18
+    }).addTo(mapInstance);
+  }
+  setTimeout(function() { mapInstance.invalidateSize(); }, 100);
+
+  mapMarkers.forEach(function(m) { mapInstance.removeLayer(m); });
+  mapMarkers = [];
+
+  const bounds = [];
+  document.querySelectorAll('.property-card').forEach(function(card) {
+    if (card.style.display === 'none') return;
+    const lat = parseFloat(card.dataset.lat);
+    const lng = parseFloat(card.dataset.lng);
+    if (isNaN(lat) || isNaN(lng)) return;
+
+    const id = card.dataset.id;
+    const addr = card.dataset.address || 'Unknown';
+    const price = parseInt(card.dataset.price) || 0;
+    const score = parseFloat(card.dataset.score) || 0;
+    const monthly = parseInt(card.dataset.monthly) || 0;
+    const beds = card.dataset.beds || '?';
+    const link = card.querySelector('.card-footer a[target="_blank"]');
+    const url = link ? link.href : '#';
+
+    const scoreColor = score >= 70 ? '#34d399' : score >= 50 ? '#fbbf24' : '#f87171';
+    const marker = L.circleMarker([lat, lng], {
+      radius: 8,
+      fillColor: scoreColor,
+      color: '#fff',
+      weight: 1,
+      fillOpacity: 0.85
+    }).addTo(mapInstance);
+
+    marker.bindPopup(
+      '<div class="map-popup">' +
+      '<strong>' + addr + '</strong>' +
+      '<span class="map-score" style="color:' + scoreColor + '">Score: ' + score + '</span> &middot; ' + beds + ' bed<br>' +
+      '\u00a3' + price.toLocaleString() + ' &middot; \u00a3' + monthly + '/mo<br>' +
+      '<a href="' + url + '" target="_blank">View listing</a> &middot; ' +
+      '<a href="#" onclick="showCardFromMap(\'' + id + '\');return false;">Show card</a>' +
+      '</div>'
+    );
+
+    mapMarkers.push(marker);
+    bounds.push([lat, lng]);
+  });
+
+  if (bounds.length > 0) {
+    mapInstance.fitBounds(bounds, { padding: [30, 30] });
+  }
+}
+
+function showCardFromMap(id) {
+  document.body.classList.remove('view-map');
+  document.getElementById('map-toggle-btn').textContent = '\ud83d\udccd Map';
+  const cardEl = document.getElementById('card-' + id);
+  if (cardEl) {
+    cardEl.scrollIntoView({behavior: 'smooth', block: 'center'});
+    cardEl.style.outline = '2px solid var(--accent)';
+    setTimeout(function() { cardEl.style.outline = ''; }, 2000);
+  }
+}
+
+let tableSortDir = {};
+function sortTable(col) {
+  const tbody = document.getElementById('table-body');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const dir = tableSortDir[col] === 'asc' ? 'desc' : 'asc';
+  tableSortDir[col] = dir;
+  rows.sort(function(a, b) {
+    let aVal = a.children[col].textContent.replace(/[\u00a3,\/mo d min]/g, '');
+    let bVal = b.children[col].textContent.replace(/[\u00a3,\/mo d min]/g, '');
+    const aNum = parseFloat(aVal), bNum = parseFloat(bVal);
+    if (!isNaN(aNum) && !isNaN(bNum)) return dir === 'asc' ? aNum - bNum : bNum - aNum;
+    return dir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+  });
+  rows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+// ==================================================================
+// VIEWINGS
+// ==================================================================
+
+let _viewingStore = {}; // { propId: { id, date, time, status, notes } }
+
+function _viewingsKey() { return 'property_viewings_v1'; }
+
+function _loadViewingStore() {
+  try { _viewingStore = JSON.parse(localStorage.getItem(_viewingsKey()) || '{}'); } catch(e) { _viewingStore = {}; }
+}
+
+function _saveViewingStore() {
+  localStorage.setItem(_viewingsKey(), JSON.stringify(_viewingStore));
+}
+
+// Open the viewing modal pre-filled for a property
+function openViewingForm(propId, address) {
+  _loadViewingStore();
+  const existing = _viewingStore[propId];
+  document.getElementById('viewing-modal-prop-id').value   = propId;
+  document.getElementById('viewing-modal-addr').textContent = address || '';
+  document.getElementById('viewing-modal-edit-id').value   = existing ? propId : '';
+
+  // Default date to upcoming Saturday
+  const now = new Date();
+  const day = now.getDay();
+  const daysToSat = day === 6 ? 7 : (6 - day);
+  const sat = new Date(now); sat.setDate(now.getDate() + daysToSat);
+  const satStr = sat.toISOString().slice(0, 10);
+
+  document.getElementById('viewing-date').value   = existing ? (existing.date || satStr) : satStr;
+  document.getElementById('viewing-time').value   = existing ? (existing.time || '10:00') : '10:00';
+  document.getElementById('viewing-status').value = existing ? (existing.status || 'scheduled') : 'scheduled';
+  document.getElementById('viewing-notes').value  = existing ? (existing.notes || '') : '';
+
+  const modal = document.getElementById('viewing-modal');
+  modal.style.display = 'flex';
+}
+
+function closeViewingModal() {
+  document.getElementById('viewing-modal').style.display = 'none';
+}
+
+function saveViewing() {
+  const propId  = parseInt(document.getElementById('viewing-modal-prop-id').value);
+  const date    = document.getElementById('viewing-date').value;
+  const time    = document.getElementById('viewing-time').value;
+  const status  = document.getElementById('viewing-status').value;
+  const notes   = document.getElementById('viewing-notes').value.trim();
+
+  if (!date) { showToast('Please pick a date'); return; }
+
+  _loadViewingStore();
+  _viewingStore[propId] = { propId, date, time, status, notes, savedAt: new Date().toISOString() };
+  _saveViewingStore();
+
+  // Also sync to server if available
+  if (location.protocol !== 'file:') {
+    fetch('/api/viewing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ property_id: propId, viewing_date: date, viewing_time: time, status, notes })
+    }).catch(() => {});
+  }
+
+  closeViewingModal();
+  renderViewings();
+  showToast('Viewing saved for ' + _fmtViewingDate(date, time));
+}
+
+function deleteViewing(propId) {
+  if (!confirm('Delete this viewing?')) return;
+  _loadViewingStore();
+  delete _viewingStore[propId];
+  _saveViewingStore();
+
+  if (location.protocol !== 'file:') {
+    fetch('/api/viewing/' + propId, { method: 'DELETE' }).catch(() => {});
+  }
+
+  renderViewings();
+  showToast('Viewing removed');
+}
+
+function _fmtViewingDate(date, time) {
+  if (!date) return 'Unknown date';
+  const d = new Date(date + (time ? 'T' + time : ''));
+  const parts = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  return parts + (time ? ' at ' + time : '');
+}
+
+function renderViewings() {
+  _loadViewingStore();
+  const list     = document.getElementById('viewings-list');
+  const empty    = document.getElementById('viewings-empty');
+  const countEl  = document.getElementById('viewings-count');
+  const navCount = document.getElementById('nav-viewings-count');
+  if (!list) return;
+
+  const entries = Object.values(_viewingStore);
+  // Sort: upcoming first, then past, then cancelled
+  const now = new Date();
+  entries.sort((a, b) => {
+    const da = new Date(a.date + (a.time ? 'T' + a.time : ''));
+    const db = new Date(b.date + (b.time ? 'T' + b.time : ''));
+    return da - db;
+  });
+
+  const scheduledCount = entries.filter(e => e.status !== 'cancelled').length;
+  if (countEl)  countEl.textContent  = '(' + entries.length + ')';
+  if (navCount) navCount.textContent = scheduledCount;
+
+  if (!entries.length) {
+    list.innerHTML = '';
+    if (empty) empty.style.display = '';
+    return;
+  }
+
+  if (empty) empty.style.display = 'none';
+
+  list.innerHTML = entries.map(v => {
+    const d    = v.date ? new Date(v.date) : null;
+    const day  = d ? d.getDate() : '?';
+    const mon  = d ? d.toLocaleDateString('en-GB', { month: 'short' }) : '';
+    const past = d && d < now && v.status === 'scheduled';
+
+    // Try to find address from the card
+    const card   = document.getElementById('card-' + v.propId);
+    const addr   = card ? (card.dataset.address || 'Property #' + v.propId) : 'Property #' + v.propId;
+    const price  = card ? parseInt(card.dataset.price || 0) : 0;
+
+    return `<div class="viewing-card${past ? ' vc-past' : ''}">
+      <div class="vc-date">
+        <div class="vc-date-day">${day}</div>
+        <div class="vc-date-month">${mon}</div>
+        ${v.time ? `<div class="vc-date-time">${v.time}</div>` : ''}
+      </div>
+      <div class="vc-body">
+        <div class="vc-addr">${addr}${price ? ' <span style="color:var(--muted);font-weight:400;font-size:0.8rem;">&middot; &pound;' + price.toLocaleString() + '</span>' : ''}</div>
+        <span class="vc-status ${v.status || 'scheduled'}">${v.status === 'completed' ? '&#10003; Completed' : v.status === 'cancelled' ? '&#10007; Cancelled' : '&#128197; Scheduled'}</span>
+        ${v.notes ? `<div class="vc-notes">${v.notes}</div>` : ''}
+        <div class="vc-actions">
+          <button onclick="openViewingForm(${v.propId}, '${addr.replace(/'/g, "\\'")}')">&#9998; Edit</button>
+          ${card ? `<button onclick="card_${v.propId}_scroll()">Show Card</button>` : ''}
+        </div>
+      </div>
+      <button class="vc-del" onclick="deleteViewing(${v.propId})" title="Delete viewing">&times;</button>
+    </div>`;
+  }).join('');
+
+  // Inject scroll helpers
+  entries.forEach(v => {
+    window['card_' + v.propId + '_scroll'] = function() {
+      const c = document.getElementById('card-' + v.propId);
+      if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'center' }); c.style.outline = '2px solid var(--accent)'; setTimeout(() => c.style.outline = '', 2000); }
+    };
+  });
+}
+
+// Close viewing modal on backdrop click
+document.getElementById('viewing-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeViewingModal();
+});
+
+// Load viewings on page load
+document.addEventListener('DOMContentLoaded', function() {
+  renderViewings();
+  // Also pull from server if available
+  if (location.protocol !== 'file:') {
+    fetch('/api/viewings').then(r => r.json()).then(data => {
+      if (data.viewings && data.viewings.length) {
+        _loadViewingStore();
+        data.viewings.forEach(v => {
+          if (!_viewingStore[v.property_id]) {
+            _viewingStore[v.property_id] = {
+              propId: v.property_id,
+              date:   v.viewing_date   || '',
+              time:   v.viewing_time   || '',
+              status: v.status         || 'scheduled',
+              notes:  v.notes          || '',
+            };
+          }
+        });
+        _saveViewingStore();
+        renderViewings();
+      }
+    }).catch(() => {});
+  }
+});
+</script>
+
+</body>
+</html>

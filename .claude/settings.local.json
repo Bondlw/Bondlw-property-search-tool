@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(where python:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\liam.bond\\\\Documents\\\\Property Search Tool\\\\scripts\\\\setup_scheduler.ps1\" 2>&1)"
+    ]
+  }
+}

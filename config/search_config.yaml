@@ -1,0 +1,332 @@
+# UK Property Search Tool — Configuration
+# All financial values in GBP, all distances in minutes walk
+
+user:
+  annual_income: 42256
+  monthly_take_home: 2650
+  total_savings: 37500
+  deposit: 37500
+  emergency_fund_target: 5000  # minimum recommended emergency fund
+  mortgage_rate: 4.5
+  mortgage_term_years: 30
+  name: "Liam Bond"
+  email: ""
+  phone: ""
+  postcode: ""
+
+budget:
+  freehold:
+    ideal_min: 170000
+    ideal_max: 180000
+    responsible_max: 185000
+    absolute_max: 190000
+  leasehold:
+    ideal_min: 150000
+    ideal_max: 165000
+    responsible_max: 170000
+    absolute_max: 180000
+    service_charge_cap_for_absolute_max: 900  # £180k only if SC < £900/yr
+
+monthly_target:
+  min: 795    # housing ≤30% of take-home — GREEN (comfortable)
+  max: 928    # housing ≤35% of take-home — AMBER ceiling (responsible stretch)
+
+estimated_bills:
+  # Verified UK 2025-26 figures for 1-bed flat in Kent
+  energy_monthly: 110    # Ofgem cap £1,641/yr typical
+  water_monthly: 40      # Southern Water avg
+  insurance_monthly: 20  # Contents + buildings basic
+  broadband_monthly: 28  # Standard fibre
+  tv_licence_monthly: 13 # £159/yr
+  total_monthly: 211
+
+council_tax_estimates:
+  # Approximate 2025-26 with 25% single person discount (varies by council area)
+  # Kent councils typically band A-C range £1,100-£1,600/yr after discount
+  A: { annual: 1123, monthly: 94 }
+  B: { annual: 1310, monthly: 109 }
+  C: { annual: 1497, monthly: 125 }
+  D: { annual: 1683, monthly: 140 }
+  E: { annual: 2056, monthly: 171 }
+  F: { annual: 2430, monthly: 203 }
+  G: { annual: 2803, monthly: 234 }
+  H: { annual: 3363, monthly: 280 }
+
+hard_gates:
+  min_bedrooms: 1
+  lease_minimum_years: 120
+  sof_lease_minimum_years: 80  # Share of freehold: extension is cheap (~£1k), no marriage value penalty
+  service_charge_max_pa: 1200
+  service_charge_ideal_pa: 1000
+  ground_rent_max_pa: 250
+  council_tax_max_band: "C"
+  epc_minimum_rating: "C"
+  station_max_walk_min: 25
+  supermarket_max_walk_min: 30
+  supermarket_preferred_walk_min: 30
+  flood_zone_reject: 3  # Reject Zone 3, flag Zone 2
+
+crime_thresholds:
+  asb_monthly_max: 10
+  burglary_monthly_max: 3
+  drugs_monthly_max: 3
+  violent_monthly_max: 8
+
+scoring:
+  financial_fit: 30
+  crime_safety: 25
+  cost_predictability: 15
+  layout_livability: 15
+  walkability: 10
+  long_term_flexibility: 5
+
+stretch:
+  max_over_budget_pct: 15
+  min_days_on_market: 60
+
+stale:
+  min_days_on_market: 30
+
+max_radius_miles: 10  # Skip DB properties further than this from any configured search area
+
+# Properties with these terms in their address are excluded from all sections
+excluded_address_terms:
+  - maidstone
+  - sevenoaks
+  - tonbridge
+  - monchelsea
+
+search_areas:
+  # TW cluster: sister near High Brooms (Southborough), London connections via Southeastern
+  # All areas on the Tonbridge–Ashford line with direct London services
+
+  primary:
+    - name: "Tunbridge Wells"
+      rightmove_id: "REGION^1366"
+      zoopla_slug: "tunbridge-wells"
+      lat: 51.1320
+      lng: 0.2630
+      miles_from_maidstone: 17
+      train_to_london_min: 56   # Charing Cross direct
+
+    - name: "Southborough"
+      rightmove_id: "REGION^22779"
+      zoopla_slug: "southborough-kent"
+      lat: 51.1580
+      lng: 0.2720
+      miles_from_maidstone: 16
+      train_to_london_min: 52   # High Brooms station
+
+    - name: "Paddock Wood"
+      rightmove_id: "REGION^19244"
+      zoopla_slug: "paddock-wood"
+      lat: 51.1820
+      lng: 0.3920
+      miles_from_maidstone: 11
+      train_to_london_min: 46   # Charing Cross
+
+    - name: "Marden"
+      rightmove_id: "REGION^16723"
+      zoopla_slug: "marden-kent"
+      lat: 51.1710
+      lng: 0.4890
+      miles_from_maidstone: 10
+      train_to_london_min: 67   # Charing Cross
+
+    - name: "Staplehurst"
+      rightmove_id: "REGION^23175"
+      zoopla_slug: "staplehurst"
+      lat: 51.1560
+      lng: 0.5540
+      miles_from_maidstone: 12
+      train_to_london_min: 63   # Charing Cross
+
+scraping:
+  min_delay_seconds: 2
+  max_delay_seconds: 5
+  max_retries: 3
+  playwright_timeout_ms: 30000
+  portals:
+    rightmove:
+      enabled: true
+      priority: 1
+    zoopla:
+      enabled: false  # Enable in Phase 5
+      priority: 2
+    onthemarket:
+      enabled: false
+      priority: 3
+
+reporting:
+  output_dir: "output/reports"
+  max_properties_per_section: 20
+  auto_open_browser: true
+
+notifications:
+  email:
+    enabled: false  # Enable after SMTP setup
+    smtp_host: ""
+    smtp_port: 587
+    smtp_user: ""
+    smtp_password: ""  # Or use config/secrets.yaml
+    to_address: "liam.bond@caseware.com"
+  toast:
+    enabled: true
+
+schedule:
+  run_time: "07:00"
+
+keywords:
+  reject_terms:
+    - "studio"
+    - "bedsit"
+    - "retirement"
+    - "over 55"
+    - "55+"
+    - "sheltered"
+    - "assisted living"
+    - "auction"
+    # "guide price" removed — normal estate agent term, not auction indicator
+    # "investor" removed — handled explicitly in check_move_in_ready (only cash-only triggers rejection)
+    - "cash buyers only"
+    - "renovation project"
+    - "in need of modernisation"
+    - "requires updating"
+    - "development opportunity"
+    - "building plot"
+    - "needs modernisation"
+    - "needs updating"
+    - "requires modernisation"
+
+  positive_terms:
+    - "separate lounge"
+    - "reception room"
+    - "living room"
+    - "sitting room"
+    - "utility room"
+    - "washer"
+    - "washing machine"
+    - "garden"
+    - "parking"
+    - "garage"
+    - "chain free"
+    - "no chain"
+    - "recently refurbished"
+    - "newly decorated"
+    - "move in condition"
+    - "ready to move"
+
+  doubling_clause_terms:
+    - "doubling"
+    - "ground rent doubles"
+    - "ground rent increases"
+    - "escalating ground rent"
+    - "ground rent review"
+
+commute_lookup:
+  # station_name: {london_min, maidstone_min, annual_season_ticket}
+  "Maidstone East":
+    london_min: 62
+    maidstone_min: 0
+    season_ticket: 5200
+  "Maidstone West":
+    london_min: 75
+    maidstone_min: 0
+    season_ticket: 5200
+  "Chatham":
+    london_min: 55
+    maidstone_min: 18
+    season_ticket: 5400
+  "Rochester":
+    london_min: 52
+    maidstone_min: 15
+    season_ticket: 5400
+  "Gillingham (Kent)":
+    london_min: 58
+    maidstone_min: 22
+    season_ticket: 5400
+  "Strood":
+    london_min: 48
+    maidstone_min: 12
+    season_ticket: 5200
+  "Gravesend":
+    london_min: 38
+    maidstone_min: 30
+    season_ticket: 4800
+  "Sittingbourne":
+    london_min: 65
+    maidstone_min: 25
+    season_ticket: 5600
+  "Faversham":
+    london_min: 70
+    maidstone_min: 30
+    season_ticket: 5800
+  "Ashford International":
+    london_min: 38
+    maidstone_min: 28
+    season_ticket: 5800
+  "Snodland":
+    london_min: 55
+    maidstone_min: 10
+    season_ticket: 4800
+  "Aylesford":
+    london_min: 60
+    maidstone_min: 5
+    season_ticket: 5000
+  "West Malling":
+    london_min: 50
+    maidstone_min: 10
+    season_ticket: 5000
+  "Dartford":
+    london_min: 32
+    maidstone_min: 40
+    season_ticket: 3600
+  "Canterbury East":
+    london_min: 85
+    maidstone_min: 40
+    season_ticket: 6200
+  "Canterbury West":
+    london_min: 56
+    maidstone_min: 45
+    season_ticket: 6200
+  "Whitstable":
+    london_min: 78
+    maidstone_min: 48
+    season_ticket: 6200
+  "Herne Bay":
+    london_min: 85
+    maidstone_min: 50
+    season_ticket: 6200
+  "Folkestone Central":
+    london_min: 55
+    maidstone_min: 50
+    season_ticket: 6400
+  "Dover Priory":
+    london_min: 65
+    maidstone_min: 55
+    season_ticket: 6600
+  "Margate":
+    london_min: 90
+    maidstone_min: 60
+    season_ticket: 6400
+  "Broadstairs":
+    london_min: 85
+    maidstone_min: 58
+    season_ticket: 6400
+  "Ramsgate":
+    london_min: 80
+    maidstone_min: 55
+    season_ticket: 6400
+  "Paddock Wood":
+    london_min: 52
+    maidstone_min: 18
+    season_ticket: 5000
+  "Headcorn":
+    london_min: 60
+    maidstone_min: 15
+    season_ticket: 5200
+  "Tonbridge":
+    london_min: 38
+    maidstone_min: 22
+    season_ticket: 4600
+
