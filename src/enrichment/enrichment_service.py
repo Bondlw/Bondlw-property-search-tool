@@ -259,16 +259,7 @@ class EnrichmentService:
             if not has_supermarket:
                 logger.debug(f"Fetching supermarkets for {prop.get('address')}")
                 supers = self.fetch_supermarkets(lat, lng)
-                if supers.get("lidl_distance_m"):
-                    result["nearest_lidl_distance_m"] = supers["lidl_distance_m"]
-                    result["nearest_lidl_walk_min"] = supers["lidl_walk_min"]
-                if supers.get("aldi_distance_m"):
-                    result["nearest_aldi_distance_m"] = supers["aldi_distance_m"]
-                    result["nearest_aldi_walk_min"] = supers["aldi_walk_min"]
-                if supers.get("nearest_supermarket_name"):
-                    result["nearest_supermarket_name"] = supers["nearest_supermarket_name"]
-                    result["nearest_supermarket_distance_m"] = supers["nearest_supermarket_distance_m"]
-                    result["nearest_supermarket_walk_min"] = supers["nearest_supermarket_walk_min"]
+                result.update(supers)
 
         # Commute lookup (uses station name or postcode district, no API call)
         commute = self.lookup_commute(postcode, nearest_station)
