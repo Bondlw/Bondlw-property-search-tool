@@ -241,30 +241,34 @@ class EnrichmentService:
             nearest_station = existing_enrichment.get("nearest_station_name")
 
         if lat and lng:
-            # Crime
-            logger.debug(f"Fetching crime for {prop.get('address')} ({lat}, {lng})")
-            crime = self.fetch_crime(lat, lng)
-            if crime:
-                result["crime_summary"] = json.dumps(crime)
-                result["crime_data_date"] = crime.get("month")
-                # Simple safety score: 100 - penalties
-                total = crime.get("total", 0)
-                score = max(0.0, 100.0 - total * 2)
-                result["crime_safety_score"] = round(score, 1)
+            # Crime — skip if already populated
+            has_crime = existing_enrichment and existing_enrichment.get("crime_summary")
+            if not has_crime:
+                logger.debug(f"Fetching crime for {prop.get('address')} ({lat}, {lng})")
+                crime = self.fetch_crime(lat, lng)
+                if crime:
+                    result["crime_summary"] = json.dumps(crime)
+                    result["crime_data_date"] = crime.get("month")
+                    # Simple safety score: 100 - penalties
+                    total = crime.get("total", 0)
+                    score = max(0.0, 100.0 - total * 2)
+                    result["crime_safety_score"] = round(score, 1)
 
-            # Supermarkets
-            logger.debug(f"Fetching supermarkets for {prop.get('address')}")
-            supers = self.fetch_supermarkets(lat, lng)
-            if supers.get("lidl_distance_m"):
-                result["nearest_lidl_distance_m"] = supers["lidl_distance_m"]
-                result["nearest_lidl_walk_min"] = supers["lidl_walk_min"]
-            if supers.get("aldi_distance_m"):
-                result["nearest_aldi_distance_m"] = supers["aldi_distance_m"]
-                result["nearest_aldi_walk_min"] = supers["aldi_walk_min"]
-            if supers.get("nearest_supermarket_name"):
-                result["nearest_supermarket_name"] = supers["nearest_supermarket_name"]
-                result["nearest_supermarket_distance_m"] = supers["nearest_supermarket_distance_m"]
-                result["nearest_supermarket_walk_min"] = supers["nearest_supermarket_walk_min"]
+            # Supermarkets — skip if already populated
+            has_supermarket = existing_enrichment and existing_enrichment.get("nearest_supermarket_name")
+            if not has_supermarket:
+                logger.debug(f"Fetching supermarkets for {prop.get('address')}")
+                supers = self.fetch_supermarkets(lat, lng)
+                if supers.get("lidl_distance_m"):
+                    result["nearest_lidl_distance_m"] = supers["lidl_distance_m"]
+                    result["nearest_lidl_walk_min"] = supers["lidl_walk_min"]
+                if supers.get("aldi_distance_m"):
+                    result["nearest_aldi_distance_m"] = supers["aldi_distance_m"]
+                    result["nearest_aldi_walk_min"] = supers["aldi_walk_min"]
+                if supers.get("nearest_supermarket_name"):
+                    result["nearest_supermarket_name"] = supers["nearest_supermarket_name"]
+                    result["nearest_supermarket_distance_m"] = supers["nearest_supermarket_distance_m"]
+                    result["nearest_supermarket_walk_min"] = supers["nearest_supermarket_walk_min"]
 
         # Commute lookup (uses station name or postcode district, no API call)
         commute = self.lookup_commute(postcode, nearest_station)

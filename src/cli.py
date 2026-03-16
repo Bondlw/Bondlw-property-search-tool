@@ -445,6 +445,67 @@ def enrich(ctx, limit):
         click.echo(f"\n--- Enrichment Complete ---\nSuccess: {success} | Failed: {failed} | {duration:.1f}s")
 
 
+@cli.command("backfill-supermarkets")
+@click.option("--limit", default=0, help="Max properties to backfill (0=all)")
+@click.pass_context
+def backfill_supermarkets(ctx, limit):
+    """Re-fetch supermarket data for properties missing it."""
+    config = ctx.obj["config"]
+    db_path = get_db_path()
+
+    with Database(db_path) as db:
+        repo = PropertyRepository(db)
+
+        rows = db.conn.execute(
+            """SELECT p.id, p.url, p.address, p.postcode, p.latitude, p.longitude
+               FROM properties p
+               INNER JOIN enrichment_data e ON p.id = e.property_id
+               WHERE p.is_active = 1
+               AND p.latitude IS NOT NULL
+               AND e.nearest_supermarket_name IS NULL
+               ORDER BY p.first_seen_date DESC"""
+        ).fetchall()
+        props = [dict(r) for r in rows]
+
+        if limit > 0:
+            props = props[:limit]
+
+        if not props:
+            click.echo("All enriched properties already have supermarket data.")
+            return
+
+        click.echo(f"Backfilling supermarket data for {len(props)} properties...")
+        service = EnrichmentService(config)
+        success = 0
+        failed = 0
+
+        for i, prop in enumerate(props):
+            try:
+                lat, lng = prop["latitude"], prop["longitude"]
+                supers = service.fetch_supermarkets(lat, lng)
+                if supers.get("nearest_supermarket_name"):
+                    update = {"property_id": prop["id"]}
+                    update.update(supers)
+                    repo.upsert_enrichment(update)
+                    success += 1
+                    click.echo(
+                        f"  [{i+1}/{len(props)}] {prop['address'][:45]} — "
+                        f"{supers['nearest_supermarket_name']} {supers['nearest_supermarket_walk_min']}min walk"
+                    )
+                else:
+                    failed += 1
+                    click.echo(f"  [{i+1}/{len(props)}] {prop['address'][:45]} — no supermarkets found")
+            except Exception as e:
+                failed += 1
+                logger.error(f"Supermarket backfill error for {prop['address']}: {e}")
+
+            if (i + 1) % 20 == 0:
+                click.echo(f"  Progress: {i+1}/{len(props)} ({success} ok, {failed} failed)")
+
+        click.echo(f"\n--- Supermarket Backfill Complete ---")
+        click.echo(f"Success: {success} | Failed: {failed}")
+
+
 @cli.command("backfill-stations")
 @click.option("--limit", default=0, help="Max properties to backfill (0=all)")
 @click.pass_context

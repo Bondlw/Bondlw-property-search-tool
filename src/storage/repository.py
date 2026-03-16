@@ -342,14 +342,16 @@ class PropertyRepository:
         return dict(row) if row else None
 
     def get_properties_needing_enrichment(self) -> list[dict]:
-        """Get active properties that have coords but no enrichment data."""
+        """Get active properties that have coords but incomplete enrichment data."""
         rows = self.db.conn.execute(
             """SELECT p.id, p.url, p.address, p.postcode, p.latitude, p.longitude
                FROM properties p
                LEFT JOIN enrichment_data e ON p.id = e.property_id
                WHERE p.is_active = 1
                AND p.latitude IS NOT NULL
-               AND (e.property_id IS NULL OR e.crime_summary IS NULL)
+               AND (e.property_id IS NULL
+                    OR e.crime_summary IS NULL
+                    OR e.nearest_supermarket_name IS NULL)
                ORDER BY p.first_seen_date DESC"""
         ).fetchall()
         return [dict(r) for r in rows]

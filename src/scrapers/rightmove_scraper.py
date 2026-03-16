@@ -438,6 +438,7 @@ class RightmoveScraper(BaseScraper):
         text = re.sub(r"£[\d,]+", "", text)
         # Remove common noise phrases
         noise = [
+            "FEATURED PROPERTY", "PREMIUM LISTING",
             "Guide Price", "Premium Listing", "Offers Over",
             "Offers in Excess of", "Offers in Region of",
             "Price on Application", "POA", "From", "Shared Ownership",
@@ -445,6 +446,12 @@ class RightmoveScraper(BaseScraper):
         ]
         for phrase in noise:
             text = text.replace(phrase, "")
+        # Remove trailing property type + bed/bath counts (e.g. "Flat11", "Apartment21", "Semi-detached house32")
+        text = re.sub(
+            r"(?:Apartment|Flat|Maisonette|Terraced house|Semi-detached house|"
+            r"Detached house|Bungalow|Cottage|End of terrace house|House|Property)\d*$",
+            "", text
+        )
         # Clean up whitespace
         text = re.sub(r"\s+", " ", text).strip()
         # Remove leading/trailing punctuation
