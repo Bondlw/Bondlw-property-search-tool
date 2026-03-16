@@ -149,13 +149,13 @@ class EnrichmentService:
         for chain in MAJOR_SUPERMARKET_CHAINS:
             found = self._find_nearest_shop(chain, lat, lng)
 
-            # Store Lidl and Aldi individually for backwards compatibility
+            # Store Lidl and Aldi individually
             if chain == "Lidl" and found:
-                result["lidl_distance_m"] = round(found[0], 1)
-                result["lidl_walk_min"] = found[1]
+                result["nearest_lidl_distance_m"] = round(found[0], 1)
+                result["nearest_lidl_walk_min"] = found[1]
             elif chain == "Aldi" and found:
-                result["aldi_distance_m"] = round(found[0], 1)
-                result["aldi_walk_min"] = found[1]
+                result["nearest_aldi_distance_m"] = round(found[0], 1)
+                result["nearest_aldi_walk_min"] = found[1]
 
             if found and (best_dist is None or found[0] < best_dist):
                 best_dist = found[0]
