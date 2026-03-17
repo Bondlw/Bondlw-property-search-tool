@@ -93,6 +93,13 @@ stale:
 
 max_radius_miles: 10  # Skip DB properties further than this from any configured search area
 
+office:
+  name: "County Gate, Maidstone"
+  address: "County Gate, 2 Staceys St, Maidstone ME14 1ST"
+  lat: 51.2722
+  lng: 0.5218
+  remote_threshold_miles: 20  # 20+ miles = would need remote contract change
+
 # Properties with these terms in their address are excluded from all sections
 excluded_address_terms:
   - maidstone

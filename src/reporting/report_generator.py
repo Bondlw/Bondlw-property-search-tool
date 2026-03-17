@@ -152,6 +152,20 @@ class ReportGenerator:
                 prop["_supermarket_walk_min"] = enrichment.get("nearest_supermarket_walk_min")
                 prop["_avg_sold_price"] = enrichment.get("avg_sold_price_nearby")
 
+            # Office distance (miles, straight-line)
+            office_cfg = self.config.get("office")
+            if enrichment:
+                prop["_commute_maidstone_min"] = enrichment.get("commute_to_maidstone_min")
+            if office_cfg and prop.get("latitude") and prop.get("longitude"):
+                prop["_office_distance_miles"] = self._haversine_miles(
+                    prop["latitude"], prop["longitude"],
+                    office_cfg["lat"], office_cfg["lng"],
+                )
+                prop["_office_name"] = office_cfg.get("name", "Office")
+                prop["_office_remote_threshold"] = office_cfg.get("remote_threshold_miles", 20)
+            else:
+                prop["_office_distance_miles"] = None
+
             # Coordinates for map view (from base property, not enrichment)
             prop["_latitude"] = prop.get("latitude")
             prop["_longitude"] = prop.get("longitude")
