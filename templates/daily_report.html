@@ -13,7 +13,7 @@
     --card: #1e2028;
     --border: #2a2d38;
     --text: #f1f5f9;
-    --muted: #94a3b8;
+    --muted: #a8b5c9;
     --accent: #1c4dff;
     --green: #22c55e;
     --amber: #f59e0b;
@@ -21,6 +21,27 @@
     --score-bg: #2a2d38;
     --nav-bg: #191a1c;
     --fav: #f0645e;
+    /* Design Tokens */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-pill: 12px;
+    --space-xs: 2px;
+    --space-sm: 4px;
+    --space-md: 8px;
+    --space-lg: 12px;
+    --space-xl: 16px;
+    --space-2xl: 24px;
+    --text-xs: 0.75rem;   /* 12px min */
+    --text-sm: 0.8125rem;  /* 13px */
+    --text-base: 0.875rem; /* 14px */
+    --text-lg: 1.125rem;   /* 18px */
+    --text-xl: 1.5rem;     /* 24px */
+    --glass-dark: rgba(0, 0, 0, 0.6);
+    --bg-success: #1a3a2a;
+    --bg-warning: #3a2a1a;
+    --bg-error: #2a1a1a;
+    --bg-info: #1a2a3a;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; }
@@ -28,13 +49,17 @@
     font-family: 'League Spartan', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
-    line-height: 1.45;
+    line-height: 1.5;
     padding: 16px;
     max-width: 1920px;
     margin: 0 auto;
   }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
   /* --- Financial profile bar --- */
   .profile-bar {
@@ -531,12 +556,12 @@
   <div class="carousel" id="carousel-{{ prop.id }}">
     <div class="carousel-track">
       {% for img in images %}
-      <img src="{{ img }}" alt="Photo {{ loop.index }}" loading="lazy">
+      <img src="{{ img }}" alt="Property photo {{ loop.index }} of {{ images|length }}" loading="lazy">
       {% endfor %}
     </div>
     {% if images|length > 1 %}
-    <button class="carousel-btn prev" onclick="carouselScroll('carousel-{{ prop.id }}', -1)">&lt;</button>
-    <button class="carousel-btn next" onclick="carouselScroll('carousel-{{ prop.id }}', 1)">&gt;</button>
+    <button class="carousel-btn prev" onclick="carouselScroll('carousel-{{ prop.id }}', -1)" aria-label="Previous image">&lt;</button>
+    <button class="carousel-btn next" onclick="carouselScroll('carousel-{{ prop.id }}', 1)" aria-label="Next image">&gt;</button>
     <div class="carousel-counter">1 / {{ images|length }}</div>
     {% endif %}
   </div>
@@ -585,10 +610,10 @@
     </div>
     {% endif %}
     <div class="card-actions">
-      <button class="action-btn {% if prop._is_favourite %}fav-active{% endif %}" onclick="toggleFavourite(event, {{ prop.id }})" title="{% if prop._is_favourite %}Remove from favourites{% else %}Add to favourites{% endif %}">
+      <button class="action-btn {% if prop._is_favourite %}fav-active{% endif %}" onclick="toggleFavourite(event, {{ prop.id }})" title="{% if prop._is_favourite %}Remove from favourites{% else %}Add to favourites{% endif %}" aria-label="{% if prop._is_favourite %}Remove from favourites{% else %}Add to favourites{% endif %}">
         {% if prop._is_favourite %}&#9733;{% else %}&#9734;{% endif %}
       </button>
-      <button class="action-btn {% if prop._is_excluded %}excl-active{% endif %}" onclick="toggleExclude({{ prop.id }})" title="{% if prop._is_excluded %}Restore to reports{% else %}Exclude from reports{% endif %}">
+      <button class="action-btn {% if prop._is_excluded %}excl-active{% endif %}" onclick="toggleExclude({{ prop.id }})" title="{% if prop._is_excluded %}Restore to reports{% else %}Exclude from reports{% endif %}" aria-label="{% if prop._is_excluded %}Restore to reports{% else %}Exclude from reports{% endif %}">
         &#10005;
       </button>
     </div>
@@ -689,11 +714,11 @@
          href="https://www.google.com/maps/dir/?api=1&origin={{ walk_origin }}&destination={{ walk_dest_station }}&travelmode=walking"
          target="_blank" rel="noopener"
          title="Walk to {{ prop._nearest_station }}">
-        🚉 {{ prop._nearest_station }}{% if prop._station_walk_min %} {{ prop._station_walk_min }}min{% endif %}
+        Station: {{ prop._nearest_station }}{% if prop._station_walk_min %} {{ prop._station_walk_min }}min{% endif %}
       </a>
     {% endif %}
     {% if prop._commute_london_min %}
-      <span class="pill" title="Commute to London">🏙️ {{ prop._commute_london_min }}min</span>
+      <span class="pill" title="Commute to London">London: {{ prop._commute_london_min }}min</span>
     {% endif %}
     {% if prop._supermarket_name %}
       {% set walk_origin_super = (prop.postcode or prop.address or prop.title)|urlencode %}
@@ -702,17 +727,17 @@
          href="https://www.google.com/maps/dir/?api=1&origin={{ walk_origin_super }}&destination={{ walk_dest_super }}&travelmode=walking"
          target="_blank" rel="noopener"
          title="Walk to {{ prop._supermarket_name }}">
-        🛒 {{ prop._supermarket_walk_min }}min
+        Shop: {{ prop._supermarket_walk_min }}min
       </a>
     {% endif %}
     {% if prop._flood_zone is not none and prop._flood_zone >= 2 %}
-      <span class="pill {% if prop._flood_zone == 2 %}flood-amber{% else %}flood-red{% endif %}" title="Flood risk zone">🌊 Zone {{ prop._flood_zone }}</span>
+      <span class="pill {% if prop._flood_zone == 2 %}flood-amber{% else %}flood-red{% endif %}" title="Flood risk zone">Flood: Zone {{ prop._flood_zone }}</span>
     {% endif %}
     {% if prop._broadband_speed and prop._broadband_speed < 50 %}
-      <span class="pill {% if prop._broadband_speed >= 20 %}broadband-ok{% else %}broadband-poor{% endif %}" title="Broadband speed">📶 {{ prop._broadband_speed }}Mbps</span>
+      <span class="pill {% if prop._broadband_speed >= 20 %}broadband-ok{% else %}broadband-poor{% endif %}" title="Broadband speed">BB: {{ prop._broadband_speed }}Mbps</span>
     {% endif %}
     {% if prop._annual_season_ticket %}
-      <span class="pill" title="Monthly commute cost (season ticket £{{ prop._annual_season_ticket|int }}/yr)">🗓️ £{{ (prop._annual_season_ticket / 12)|round(0)|int }}/mo commute</span>
+      <span class="pill" title="Monthly commute cost (season ticket £{{ prop._annual_season_ticket|int }}/yr)">Commute: £{{ (prop._annual_season_ticket / 12)|round(0)|int }}/mo</span>
     {% endif %}
   </div>
 
@@ -758,7 +783,7 @@
   {# Property description #}
   {% if prop.description %}
   <details class="property-description">
-    <summary>📝 Description</summary>
+    <summary>Description</summary>
     <div class="desc-text">{{ prop.description }}</div>
   </details>
   {% endif %}
@@ -766,7 +791,7 @@
   {# Room size table #}
   {% if prop._rooms %}
   <details class="rooms-section">
-    <summary>🏠 Rooms ({{ prop._rooms|length }})</summary>
+    <summary>Rooms ({{ prop._rooms|length }})</summary>
     <table class="rooms-table">
       <thead><tr><th>Room</th><th>Size</th><th></th></tr></thead>
       <tbody>
@@ -801,7 +826,7 @@
   {# Price history — condensed: latest change inline, full collapsible #}
   {% if prop._price_history and prop._price_history|length > 1 %}
   <details class="rooms-section">
-    <summary>📉 Price history ({{ prop._price_history|length }} entries)</summary>
+    <summary>Price history ({{ prop._price_history|length }} entries)</summary>
     <div class="price-history-timeline" style="margin-top:4px;">
       {% for entry in prop._price_history %}
       <div class="ph-entry">
@@ -824,12 +849,12 @@
   <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.7rem;color:var(--muted);margin-top:4px;padding:4px 8px;background:var(--score-bg);border-radius:4px;">
     {% if prop._deposit_rec %}
       {% set dr = prop._deposit_rec %}
-      <span>💳 Deposit: <strong style="color:var(--text);">£{{ '{:,}'.format(dr.deposit|int) }}</strong></span>
+      <span>Deposit: <strong style="color:var(--text);">£{{ '{:,}'.format(dr.deposit|int) }}</strong></span>
       <span>Emergency: <strong style="color:var(--green);">£{{ '{:,}'.format(dr.emergency_fund|int) }}</strong></span>
     {% endif %}
     {% if prop._recommended_offer %}
       {% set ro = prop._recommended_offer %}
-      <span>💰 Offer: <strong style="color:var(--green);">£{{ (ro.offer_price / 1000)|round(0)|int }}k</strong> (−{{ ro.discount_pct }}%)</span>
+      <span>Offer: <strong style="color:var(--green);">£{{ (ro.offer_price / 1000)|round(0)|int }}k</strong> (−{{ ro.discount_pct }}%)</span>
       <span>All-in: <strong style="color:var(--{{ ro.offer_affordability }});">£{{ ro.offer_all_in_monthly|int }}/mo</strong></span>
     {% endif %}
   </div>
@@ -851,7 +876,7 @@
     <span class="note-saved" id="note-saved-{{ prop.id }}" style="font-size:0.62rem;color:var(--green);opacity:0;transition:opacity 0.3s;">✓ Saved</span>
   </div>
   <details class="rooms-section">
-    <summary>📝 Notes</summary>
+    <summary>Notes</summary>
     <textarea id="note-{{ prop.id }}" placeholder="Add notes..." onblur="saveNote({{ prop.id }}, this.value)" style="width:100%;min-height:40px;max-height:80px;resize:vertical;font-size:0.72rem;padding:4px;border:1px solid var(--border);border-radius:3px;background:var(--score-bg);color:var(--text);font-family:inherit;margin-top:4px;"></textarea>
   </details>
 
@@ -859,8 +884,8 @@
   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:0.68rem;color:var(--muted);gap:4px;flex-wrap:wrap;">
     <span>{% if prop.agent_name %}{{ prop.agent_name }}{% endif %}</span>
     <div style="display:flex;gap:4px;align-items:center;">
-      <button class="enquiry-btn" onclick="sendEnquiry({{ prop.id }}, '{{ prop.portal_id }}', '{{ prop.address|default(prop.title, true)|replace("'", "\\'")|replace('"', '') }}', '{{ prop.agent_name|default('Estate Agent', true)|replace("'", "\\'")|replace('"', '') }}', '{{ prop.url|replace("'", "\\'")|replace('"', '') }}', '{{ prop.price }}')">✉</button>
-      <button class="enquiry-btn" style="border-color:var(--muted);color:var(--muted)" onclick="openViewingForm({{ prop.id }}, '{{ prop.address|default(prop.title, true)|replace("'", "\\'")|replace('"', '') }}')">📅</button>
+      <button class="enquiry-btn" onclick="sendEnquiry({{ prop.id }}, '{{ prop.portal_id }}', '{{ prop.address|default(prop.title, true)|replace("'", "\\'")|replace('"', '') }}', '{{ prop.agent_name|default('Estate Agent', true)|replace("'", "\\'")|replace('"', '') }}', '{{ prop.url|replace("'", "\\'")|replace('"', '') }}', '{{ prop.price }}')" aria-label="Send enquiry">✉</button>
+      <button class="enquiry-btn" style="border-color:var(--muted);color:var(--muted)" onclick="openViewingForm({{ prop.id }}, '{{ prop.address|default(prop.title, true)|replace("'", "\\'")|replace('"', '') }}')" aria-label="Book viewing">Book</button>
       <a href="{{ prop.url }}" target="_blank">View ↗</a>
     </div>
   </div>
@@ -1331,9 +1356,9 @@
 {% endif %}
 
 <div id="toast" class="toast"></div>
-<button id="back-to-top" onclick="window.scrollTo({top:0})" title="Back to top" style="position:fixed;bottom:20px;left:20px;width:36px;height:36px;border-radius:50%;background:var(--card);border:1px solid var(--border);color:var(--muted);font-size:1.1rem;cursor:pointer;z-index:100;opacity:0;transition:opacity 0.3s;display:flex;align-items:center;justify-content:center;">↑</button>
+<button id="back-to-top" onclick="window.scrollTo({top:0})" title="Back to top" aria-label="Back to top" style="position:fixed;bottom:20px;left:20px;width:36px;height:36px;border-radius:50%;background:var(--card);border:1px solid var(--border);color:var(--muted);font-size:1.1rem;cursor:pointer;z-index:100;opacity:0;transition:opacity 0.3s;display:flex;align-items:center;justify-content:center;">↑</button>
 <div id="lightbox" class="lightbox" onclick="closeLightbox()">
-  <button type="button" class="lightbox-close" onclick="closeLightbox()">✕</button>
+  <button type="button" class="lightbox-close" onclick="closeLightbox()" aria-label="Close image viewer">✕</button>
   <img id="lightbox-img" src="" alt="Floor plan">
 </div>
 

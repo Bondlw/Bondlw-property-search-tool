@@ -17,12 +17,12 @@ user:
 
 budget:
   freehold:
-    ideal_min: 160000
+    ideal_min: 170000
     ideal_max: 190000       # £1,093 all-in — comfortable AMBER
     responsible_max: 195000  # low-SC freeholds only
     absolute_max: 200000     # max listed price — realistic negotiation to £190k or below
   leasehold:
-    ideal_min: 145000
+    ideal_min: 170000
     ideal_max: 175000       # sweet spot with typical SC
     responsible_max: 180000  # your leasehold ceiling
     absolute_max: 200000     # max listed leasehold to negotiate down from

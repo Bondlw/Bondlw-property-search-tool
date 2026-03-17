@@ -42,6 +42,10 @@ class RightmoveScraper(BaseScraper):
 
         # Determine price range — use the widest range across tenure types
         # No stretch buffer — absolute_max IS the max listed price we'd consider
+        min_price = min(
+            budget_config.get("freehold", {}).get("ideal_min", 170000),
+            budget_config.get("leasehold", {}).get("ideal_min", 170000),
+        )
         max_price = max(
             budget_config.get("freehold", {}).get("absolute_max", 200000),
             budget_config.get("leasehold", {}).get("absolute_max", 200000),
@@ -55,6 +59,7 @@ class RightmoveScraper(BaseScraper):
             params = {
                 "searchType": "SALE",
                 "locationIdentifier": location_id,
+                "minPrice": min_price,
                 "maxPrice": max_price,
                 "propertyTypes": "detached,semi-detached,terraced,flat",
                 "dontShow": "retirement,sharedOwnership,auction",
