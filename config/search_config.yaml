@@ -329,4 +329,24 @@ commute_lookup:
     london_min: 38
     maidstone_min: 22
     season_ticket: 4600
+  "Tunbridge Wells":
+    london_min: 56
+    maidstone_min: 25
+    season_ticket: 5000
+  "High Brooms":
+    london_min: 52
+    maidstone_min: 22
+    season_ticket: 5000
+  "Frant":
+    london_min: 60
+    maidstone_min: 30
+    season_ticket: 5000
+  "Marden":
+    london_min: 67
+    maidstone_min: 15
+    season_ticket: 5200
+  "Staplehurst":
+    london_min: 63
+    maidstone_min: 12
+    season_ticket: 5200
 
