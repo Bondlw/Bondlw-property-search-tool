@@ -1092,11 +1092,11 @@
 
 {# Sticky navigation #}
 <nav class="nav" id="nav">
-  <a href="#sec-favourites">Favourites <span class="badge-count">{{ favourites|length }}</span></a>
+  <a href="#sec-favourites">Favourites <span class="badge-count" id="nav-fav-count">{{ favourites|length }}</span></a>
   <a href="#sec-viewings" id="nav-viewings">Viewings <span class="badge-count" id="nav-viewings-count">0</span></a>
-  <a href="#sec-qualifying">Qualifying <span class="badge-count">{{ qualifying_count }}</span></a>
-  <a href="#sec-opportunities">Opportunities <span class="badge-count">{{ opportunities|length }}</span></a>
-  <a href="#sec-near-misses">Near Misses <span class="badge-count">{{ near_miss_count }}</span></a>
+  <a href="#sec-qualifying">Qualifying <span class="badge-count" id="nav-qualifying-count">{{ qualifying_count }}</span></a>
+  <a href="#sec-opportunities">Opportunities <span class="badge-count" id="nav-opportunities-count">{{ opportunities|length }}</span></a>
+  <a href="#sec-near-misses">Near Misses <span class="badge-count" id="nav-near-misses-count">{{ near_miss_count }}</span></a>
   <span class="nav-new-count">★ New: {{ new_today_count }}</span>
   <a href="#sec-areas">Areas</a>
   <span style="margin-left: auto; font-size: 0.72rem; color: var(--muted);">Generated: {{ generated_at }}</span>
@@ -1250,7 +1250,7 @@
 
 {# ---- Qualifying ---- #}
 <details open id="sec-qualifying">
-  <summary>Qualifying Properties <span class="count">({{ qualifying|length }})</span></summary>
+  <summary>Qualifying Properties <span class="count" id="section-qualifying-count">({{ qualifying|length }})</span></summary>
   <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">These properties pass <strong>every</strong> hard gate — budget, lease, EPC, service charge, location, crime, <strong>and monthly cost is within your GREEN target (≤£{{ config.monthly_target.min }}/mo housing)</strong>. Safe to enquire at asking price.</div>
   <div class="excl-indicator" id="excl-indicator-qualifying" style="display:none;">
     <span>⚠ <strong id="excl-count-qualifying">0</strong> qualifying properties hidden by exclude</span>
@@ -1270,7 +1270,7 @@
 {# ---- Opportunities (merged stretch + negotiation) ---- #}
 {% if opportunities %}
 <details {{ 'open' if opportunities|length <= 15 }} id="sec-opportunities">
-  <summary>Opportunities <span class="count">({{ opportunities|length }})</span></summary>
+  <summary>Opportunities <span class="count" id="section-opportunities-count">({{ opportunities|length }})</span></summary>
   <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">Properties where a <strong>suggested offer would bring costs into your GREEN target</strong>. Sorted by: negotiation candidates first (only price gate fails), then stretch (over AMBER but offer works).</div>
   {% if stretch_impact %}
   <details style="margin: 8px 0;">
@@ -1296,7 +1296,7 @@
 {# ---- Near Misses ---- #}
 {% if near_misses %}
 <details id="sec-near-misses">
-  <summary>Near Misses — Failed 1-2 Gates <span class="count">({{ near_misses|length }})</span></summary>
+  <summary>Near Misses — Failed 1-2 Gates <span class="count" id="section-near-misses-count">({{ near_misses|length }})</span></summary>
   <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">These fail 1–2 gates but a <strong>negotiated offer would bring them into budget</strong>. Review the gate failures on each card to decide if you can live with them.</div>
   <div class="cards">
   {% for prop in near_misses %}
@@ -1764,6 +1764,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbo
 // ------------------------------------------------------------------
 const EPC_ORDER = ['A','B','C','D','E','F','G'];
 const CT_ORDER  = ['A','B','C','D','E','F','G','H'];
+function updateNavCounts() {  var secs = [    ["sec-qualifying","nav-qualifying-count","section-qualifying-count"],    ["sec-opportunities","nav-opportunities-count","section-opportunities-count"],    ["sec-near-misses","nav-near-misses-count","section-near-misses-count"]  ];  secs.forEach(function(s) {    var sec = document.getElementById(s[0]);    if (!sec) return;    var n = 0;    sec.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") n++; });    var nav = document.getElementById(s[1]);    if (nav) nav.textContent = n;    var hdr = document.getElementById(s[2]);    if (hdr) hdr.textContent = "(" + n + ")";  });  var fc = document.getElementById("fav-cards");  if (fc) {    var fv = 0;    fc.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") fv++; });    var fn = document.getElementById("nav-fav-count");    if (fn) fn.textContent = fv;  }}
 
 function applyFilters() {
   const search     = (document.getElementById('filter-search').value || '').toLowerCase();
@@ -1806,6 +1807,7 @@ function applyFilters() {
   const countEl = document.getElementById('filter-count');
   const total = document.querySelectorAll('.property-card:not(:has(.action-btn.excl-active))').length;
   countEl.textContent = (visible < total) ? `Showing ${visible} of ${total}` : '';
+  updateNavCounts();
 }
 
 function clearFilters() {
@@ -1816,6 +1818,7 @@ function clearFilters() {
     if (!c.querySelector('.action-btn.excl-active')) c.style.display = '';
   });
   document.getElementById('filter-count').textContent = '';
+  updateNavCounts();
 }
 
 function sortCards(val) {
