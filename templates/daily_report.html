@@ -1459,7 +1459,7 @@ document.addEventListener('DOMContentLoaded', function() {
   clearFilters();
   updateExcludeIndicators();
   // Backup: catch late browser autocomplete that fires after DOMContentLoaded
-  setTimeout(function() { clearFilters(); updateExcludeIndicators(); }, 150);
+  setTimeout(function() { clearFilters(); updateExcludeIndicators(); updateNavCounts(); }, 150);
 });
 
 function updateExcludeIndicators() {
