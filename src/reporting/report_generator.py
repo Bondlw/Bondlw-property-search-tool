@@ -59,6 +59,15 @@ class ReportGenerator:
         # Convert radians distance to miles (Earth radius ~3959 mi)
         best_miles = best_dist * 3959
         return best_name, best_miles
+    @staticmethod
+    def _haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+        """Straight-line distance in miles between two lat/lng points."""
+        dlat = math.radians(lat2 - lat1)
+        dlng = math.radians(lng2 - lng1)
+        a = (math.sin(dlat / 2) ** 2
+             + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+             * math.sin(dlng / 2) ** 2)
+        return round(2 * math.asin(math.sqrt(a)) * 3959, 1)
 
         # Exposed after generate() for use by caller
         self.last_qualifying: list[dict] = []

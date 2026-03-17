@@ -739,6 +739,13 @@
     {% if prop._annual_season_ticket %}
       <span class="pill" title="Monthly commute cost (season ticket £{{ prop._annual_season_ticket|int }}/yr)">Commute: £{{ (prop._annual_season_ticket / 12)|round(0)|int }}/mo</span>
     {% endif %}
+    {% if prop._office_distance_miles is not none %}
+      {% set od = prop._office_distance_miles %}
+      <span class="pill {% if od <= 12 %}walk-green{% elif od <= 18 %}walk-amber{% else %}walk-red{% endif %}"
+            title="{{ prop._office_name|default('Office') }} — {{ od }} miles straight-line{% if od >= prop._office_remote_threshold|default(20) %}. Would require remote contract change{% endif %}">
+        Office: {{ od }}mi{% if od >= prop._office_remote_threshold|default(20) %} ⚠{% endif %}
+      </span>
+    {% endif %}
   </div>
 
   {# Score breakdown — collapsible, hover for reason #}
@@ -1021,6 +1028,7 @@
       <button type="button" class="settings-apply" onclick="applySettings()">Apply &amp; Recalculate</button>
       <button type="button" class="filter-btn" onclick="resetSettings()">Reset to defaults</button>
       <button type="button" class="filter-btn" onclick="runStressTest()">Stress Test</button>
+      <button type="button" class="filter-btn" onclick="if(confirm('Clear all favourites, exclusions and notes?')){localStorage.removeItem('property-tool-state');location.reload();}">Reset Cache</button>
       <span class="settings-note">Cost bars update instantly. Gate/scoring changes require re-running <code>python -m src report</code>.</span>
     </div>
     <div id="stress-test-results" style="display:none; grid-column: 1 / -1; margin-top: 8px; padding: 8px; background: var(--score-bg); border-radius: 4px; font-size: 0.75rem;">

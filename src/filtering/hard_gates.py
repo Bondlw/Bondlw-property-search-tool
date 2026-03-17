@@ -95,6 +95,15 @@ def check_price_cap(prop: dict, enrichment: dict | None, config: dict) -> GateRe
     budget = config.get("budget", {})
     monthly_max = config.get("monthly_target", {}).get("max", 928)
 
+    # Check minimum price across all tenures
+    min_prices = [
+        budget.get("freehold", {}).get("ideal_min", 0),
+        budget.get("leasehold", {}).get("ideal_min", 0),
+    ]
+    price_floor = min(p for p in min_prices if p > 0) if any(p > 0 for p in min_prices) else 0
+    if price_floor and price < price_floor:
+        return GateResult("price_cap", False, f"£{price:,} below minimum £{price_floor:,}")
+
     if not tenure:
         return GateResult("price_cap", False, "Tenure unknown — cannot determine budget cap")
 
