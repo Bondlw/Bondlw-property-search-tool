@@ -13,23 +13,26 @@ user:
   email: ""
   phone: ""
   postcode: ""
+  is_first_time_buyer: false  # Standard SDLT rates apply
 
 budget:
   freehold:
-    ideal_min: 170000
-    ideal_max: 180000
-    responsible_max: 185000
-    absolute_max: 190000
+    ideal_min: 160000
+    ideal_max: 190000       # £1,093 all-in — comfortable AMBER
+    responsible_max: 195000  # low-SC freeholds only
+    absolute_max: 200000     # max listed price — realistic negotiation to £190k or below
   leasehold:
-    ideal_min: 150000
-    ideal_max: 165000
-    responsible_max: 170000
-    absolute_max: 180000
-    service_charge_cap_for_absolute_max: 900  # £180k only if SC < £900/yr
+    ideal_min: 145000
+    ideal_max: 175000       # sweet spot with typical SC
+    responsible_max: 180000  # your leasehold ceiling
+    absolute_max: 200000     # max listed leasehold to negotiate down from
+    service_charge_cap_for_absolute_max: 800  # £200k only if SC < £800/yr
 
 monthly_target:
   min: 795    # housing ≤30% of take-home — GREEN (comfortable)
   max: 928    # housing ≤35% of take-home — AMBER ceiling (responsible stretch)
+
+all_in_monthly_max: 1271  # 40% rule hard ceiling (housing + bills) — max advisable for single income
 
 estimated_bills:
   # Verified UK 2025-26 figures for 1-bed flat in Kent
@@ -56,9 +59,10 @@ hard_gates:
   min_bedrooms: 1
   lease_minimum_years: 120
   sof_lease_minimum_years: 80  # Share of freehold: extension is cheap (~£1k), no marriage value penalty
-  service_charge_max_pa: 1200
-  service_charge_ideal_pa: 1000
-  ground_rent_max_pa: 250
+  service_charge_max_pa: 1800   # realistic for TW area — £1,500-1,800 common in managed blocks
+  service_charge_ideal_pa: 1200  # preferred cap — above this check what's included
+  ground_rent_max_pa: 350       # lenient — but auto-reject any escalation/doubling clauses
+  ground_rent_ideal_pa: 200     # preferred — flag above this
   council_tax_max_band: "C"
   epc_minimum_rating: "C"
   station_max_walk_min: 25
