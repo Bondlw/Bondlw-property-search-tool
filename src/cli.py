@@ -12,7 +12,7 @@ from .config_loader import load_config, get_all_areas
 from .enrichment.enrichment_service import EnrichmentService
 from .notifications.notifier import Notifier
 from .reporting.report_generator import ReportGenerator
-from .scrapers.http_client import HttpClient
+from .scrapers.http_client import HttpClient, ListingGoneError
 from .scrapers.rightmove_scraper import RightmoveScraper
 from .storage.database import Database
 from .storage.repository import PropertyRepository
@@ -122,6 +122,7 @@ def run(ctx, portal, area, skip_detail):
                 detail_ok = 0
                 detail_fail = 0
 
+                detail_gone = 0
                 for i, prop in enumerate(needs_detail):
                     try:
                         listing = scraper.get_listing_detail(prop["url"])
@@ -138,6 +139,10 @@ def run(ctx, portal, area, skip_detail):
                             detail_ok += 1
                         else:
                             detail_fail += 1
+                    except ListingGoneError:
+                        repo.mark_inactive(prop["id"], status="removed")
+                        detail_gone += 1
+                        click.echo(f"  Deactivated (410 Gone): {prop.get('address', prop['url'])}")
                     except Exception as e:
                         detail_fail += 1
                         logger.error(f"Detail fetch error: {e}")
@@ -145,7 +150,7 @@ def run(ctx, portal, area, skip_detail):
                     if (i + 1) % 10 == 0:
                         click.echo(f"  Progress: {i+1}/{len(needs_detail)}")
 
-                click.echo(f"Details: {detail_ok} fetched | {detail_fail} failed")
+                click.echo(f"Details: {detail_ok} fetched | {detail_fail} failed | {detail_gone} removed")
             else:
                 click.echo("All properties already have details.")
 
@@ -346,6 +351,7 @@ def detail(ctx, limit):
         start_time = time.time()
         success = 0
         failed = 0
+        gone = 0
 
         for i, prop in enumerate(props):
             prop_id = prop["id"]
@@ -377,6 +383,10 @@ def detail(ctx, limit):
                 else:
                     failed += 1
                     click.echo(f"  [{i+1}/{len(props)}] FAILED: {url}")
+            except ListingGoneError:
+                repo.mark_inactive(prop_id, status="removed")
+                gone += 1
+                click.echo(f"  [{i+1}/{len(props)}] Deactivated (410 Gone): {prop.get('address', url)}")
             except Exception as e:
                 failed += 1
                 logger.error(f"Error fetching detail for {url}: {e}")
@@ -384,7 +394,7 @@ def detail(ctx, limit):
         duration = time.time() - start_time
         click.echo(
             f"\n--- Detail Fetch Complete ---\n"
-            f"Success: {success} | Failed: {failed} | Duration: {duration:.1f}s"
+            f"Success: {success} | Failed: {failed} | Removed: {gone} | Duration: {duration:.1f}s"
         )
 
 

@@ -10,6 +10,10 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+class ListingGoneError(Exception):
+    """Raised when a listing returns HTTP 410 Gone (removed from portal)."""
+
+
 class HttpClient:
     """HTTP session with rate limiting, retry logic, and user agent rotation."""
 
@@ -90,6 +94,11 @@ class HttpClient:
                     )
                     time.sleep(wait)
                     continue
+
+                if response.status_code == 410:
+                    raise ListingGoneError(
+                        f"Listing removed (410 Gone): {url}"
+                    )
 
                 response.raise_for_status()
                 return response
