@@ -89,6 +89,7 @@ class ReportGenerator:
         excl_ids = excluded_ids or set()
 
         qualifying = []
+        needs_verification = []
         near_misses = []
         rejected = []
         new_today = []
@@ -232,7 +233,15 @@ class ReportGenerator:
 
             # Categorise non-favourited properties
             if passed:
-                qualifying.append(prop)
+                # Check if any gate has needs_verification flag
+                has_unverified = any(g.needs_verification for g in gate_results)
+                if has_unverified:
+                    prop["_needs_verification"] = True
+                    prop["_unverified_fields"] = [g for g in gate_results if g.needs_verification]
+                    needs_verification.append(prop)
+                else:
+                    prop["_needs_verification"] = False
+                    qualifying.append(prop)
             else:
                 neg_check = prop.get("_negotiation")
                 offer_qualifies = neg_check and neg_check.get("would_qualify")
@@ -276,6 +285,7 @@ class ReportGenerator:
 
         # Sort sections: new items first, then by score/failed count
         qualifying.sort(key=lambda p: (not p.get("_is_new"), -(p.get("_scores") or {}).get("total", 0)))
+        needs_verification.sort(key=lambda p: (not p.get("_is_new"), -(p.get("_scores") or {}).get("total", 0)))
         stretch.sort(key=lambda p: (not p.get("_is_new"), p.get("_stretch_monthly", 9999)))
 
         # Deduplicate negotiation list
@@ -344,7 +354,7 @@ class ReportGenerator:
         ))
 
         # Area stats (only radius-filtered properties)
-        area_stats = self._compute_area_stats(in_radius_props, qualifying)
+        area_stats = self._compute_area_stats(in_radius_props, qualifying + needs_verification)
 
         # First-import detection
         is_first_import = len(new_today) > 50 and (len(new_today) / max(radius_filtered_count, 1)) > 0.8
@@ -358,9 +368,11 @@ class ReportGenerator:
             generated_at=datetime.now().strftime("%A %d %B %Y at %H:%M"),
             total_properties=radius_filtered_count,
             qualifying_count=len(qualifying),
+            needs_verification_count=len(needs_verification),
             new_today_count=len(new_today),
             near_miss_count=len(near_misses),
             qualifying=qualifying,
+            needs_verification=needs_verification,
             new_today=new_today[:20] if is_first_import else new_today,
             near_misses=near_misses,
             opportunities=opportunities,

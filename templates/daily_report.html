@@ -113,6 +113,7 @@
   }
   .property-card.qualifying { border-left: 3px solid var(--green); }
   .property-card.near-miss { border-left: 3px solid var(--amber); }
+  .property-card.needs-verify { border-left: 3px solid #6366f1; }
   .property-card.stretch { border-left: 3px solid var(--accent); }
   .property-card.negotiation { border-left: 3px solid var(--accent); }
   .property-card.favourite { border-left: 3px solid var(--fav); }
@@ -309,6 +310,7 @@
   .badge.section-stretch { background: #1a2a3a; color: var(--accent); }
   .badge.section-negotiation { background: #1a2a3a; color: var(--accent); }
   .badge.section-near-miss { background: #3a2a1a; color: var(--amber); }
+  .badge.section-needs-verify { background: #1e1b4b; color: #818cf8; }
   .badge.section-favourite { background: #3a2a0a; color: var(--fav); }
 
   /* Area table */
@@ -1056,6 +1058,10 @@
     <div class="value">{{ qualifying_count }}</div>
     <div class="label">Qualifying</div>
   </div>
+  <div class="stat">
+    <div class="value">{{ needs_verification_count }}</div>
+    <div class="label">Needs Verifying</div>
+  </div>
   <div class="stat amber">
     <div class="value">{{ new_today_count }}</div>
     <div class="label">New Today</div>
@@ -1076,7 +1082,7 @@
 
 {# Daily Changelog #}
 {% set reduced_props = [] %}
-{% for p in qualifying + near_misses + opportunities + favourites %}
+{% for p in qualifying + needs_verification + near_misses + opportunities + favourites %}
   {% if p._is_reduced and p._price_history|length > 0 %}
     {% if reduced_props.append(p) %}{% endif %}
   {% endif %}
@@ -1128,6 +1134,7 @@
   <a href="#sec-favourites">Favourites <span class="badge-count" id="nav-fav-count">{{ favourites|length }}</span></a>
   <a href="#sec-viewings" id="nav-viewings">Viewings <span class="badge-count" id="nav-viewings-count">0</span></a>
   <a href="#sec-qualifying">Qualifying <span class="badge-count" id="nav-qualifying-count">{{ qualifying_count }}</span></a>
+  <a href="#sec-needs-verification">Verify <span class="badge-count" id="nav-verify-count">{{ needs_verification_count }}</span></a>
   <a href="#sec-opportunities">Opportunities <span class="badge-count" id="nav-opportunities-count">{{ opportunities|length }}</span></a>
   <a href="#sec-near-misses">Near Misses <span class="badge-count" id="nav-near-misses-count">{{ near_miss_count }}</span></a>
   <span class="nav-new-count">★ New: {{ new_today_count }}</span>
@@ -1254,6 +1261,9 @@
     {% if qualifying %}
     <label class="action-item"><input type="checkbox" onchange="this.parentElement.classList.toggle('done')"> Check {{ qualifying|length }} qualifying propert{{ 'y' if qualifying|length == 1 else 'ies' }} — send enquiries for any not yet contacted</label>
     {% endif %}
+    {% if needs_verification %}
+    <label class="action-item"><input type="checkbox" onchange="this.parentElement.classList.toggle('done')"> Verify {{ needs_verification|length }} propert{{ 'y' if needs_verification|length == 1 else 'ies' }} — contact agents to confirm SC/GR/lease details</label>
+    {% endif %}
     {% if opportunities %}
     <label class="action-item"><input type="checkbox" onchange="this.parentElement.classList.toggle('done')"> Review {{ opportunities|length }} opportunit{{ 'y' if opportunities|length == 1 else 'ies' }} — check suggested offer prices</label>
     {% endif %}
@@ -1284,7 +1294,7 @@
 {# ---- Qualifying ---- #}
 <details open id="sec-qualifying">
   <summary>Qualifying Properties <span class="count" id="section-qualifying-count">({{ qualifying|length }})</span></summary>
-  <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">These properties pass <strong>every</strong> hard gate — budget, lease, EPC, service charge, location, crime, <strong>and monthly cost is within your GREEN target (≤£{{ config.monthly_target.min }}/mo housing)</strong>. Safe to enquire at asking price.</div>
+  <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">These properties pass <strong>every</strong> hard gate — budget, lease, EPC, service charge, location, crime, <strong>and monthly cost is within your qualifying ceiling (≤£{{ config.monthly_target.max }}/mo housing / £{{ config.all_in_monthly_max }} all-in)</strong>. Safe to enquire at asking price.</div>
   <div class="excl-indicator" id="excl-indicator-qualifying" style="display:none;">
     <span>⚠ <strong id="excl-count-qualifying">0</strong> qualifying properties hidden by exclude</span>
     <button onclick="showExcludedInSection('sec-qualifying')">Show all</button>
@@ -1297,6 +1307,21 @@
   </div>
   {% else %}
   <div class="empty-state">No properties currently pass all hard gates.</div>
+  {% endif %}
+</details>
+
+{# ---- Needs Verification ---- #}
+<details {{ 'open' if needs_verification }} id="sec-needs-verification">
+  <summary>Needs Verification <span class="count" id="section-verify-count">({{ needs_verification|length }})</span></summary>
+  <div style="color: var(--muted); font-size: 0.78rem; padding: 6px 0;">These properties pass all gates but have <strong>unknown service charge, ground rent, or lease length</strong> that couldn’t be confirmed from the listing. Contact the agent to verify before proceeding.</div>
+  {% if needs_verification %}
+  <div class="cards">
+  {% for prop in needs_verification %}
+    {{ render_card(prop, "needs-verify", section_label="needs verify") }}
+  {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">No properties need verification right now.</div>
   {% endif %}
 </details>
 

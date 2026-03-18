@@ -30,9 +30,9 @@ budget:
 
 monthly_target:
   min: 795    # housing ≤30% of take-home — GREEN (comfortable)
-  max: 928    # housing ≤35% of take-home — AMBER ceiling (responsible stretch)
+  max: 889    # housing ceiling — £1,100 all-in after £211 bills — AMBER/qualifying max
 
-all_in_monthly_max: 1271  # 40% rule hard ceiling (housing + bills) — max advisable for single income
+all_in_monthly_max: 1100  # hard ceiling (housing + bills) — max advisable for single income
 
 estimated_bills:
   # Verified UK 2025-26 figures for 1-bed flat in Kent
@@ -106,6 +106,8 @@ excluded_address_terms:
   - sevenoaks
   - tonbridge
   - monchelsea
+  - chatham
+  - rochester
 
 search_areas:
   # TW cluster: sister near High Brooms (Southborough), London connections via Southeastern

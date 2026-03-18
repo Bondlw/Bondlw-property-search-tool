@@ -14,6 +14,7 @@ class GateResult:
     gate_name: str
     passed: bool
     reason: str
+    needs_verification: bool = False
 
 
 def check_all_gates(
@@ -161,25 +162,25 @@ def check_price_cap(prop: dict, enrichment: dict | None, config: dict) -> GateRe
 
 
 def check_monthly_cost(prop: dict, enrichment: dict | None, config: dict) -> GateResult:
-    """Check total monthly housing cost is within GREEN ceiling.
+    """Check total monthly housing cost is within qualifying ceiling.
 
     This is the definitive affordability gate — even if a property's price
     is below the cap, high service charges, ground rent, or council tax
     can push the monthly cost above the acceptance criteria.
-    GREEN = housing ≤ monthly_target.min (comfortable, safe to enquire).
-    AMBER properties (between min and max) fail this gate but may qualify
-    at a negotiated offer price — those appear in the Negotiation section.
+    Qualifying ceiling = monthly_target.max (£889 housing = £1,100 all-in).
+    Properties under monthly_target.min (£795) show as GREEN (comfortable).
+    Properties between min and max show as AMBER (qualifying stretch).
     """
-    monthly_green = config.get("monthly_target", {}).get("min", 795)
+    monthly_max = config.get("monthly_target", {}).get("max", 889)
     monthly = _estimate_monthly_housing(prop, config)
     if monthly is None:
         return GateResult("monthly_cost", False, "Cannot estimate monthly cost")
-    if monthly > monthly_green:
+    if monthly > monthly_max:
         return GateResult(
             "monthly_cost", False,
-            f"Housing £{monthly:,.0f}/mo exceeds £{monthly_green}/mo GREEN target"
+            f"Housing £{monthly:,.0f}/mo exceeds £{monthly_max}/mo qualifying ceiling"
         )
-    return GateResult("monthly_cost", True, f"Housing £{monthly:,.0f}/mo within £{monthly_green}/mo GREEN target")
+    return GateResult("monthly_cost", True, f"Housing £{monthly:,.0f}/mo within £{monthly_max}/mo qualifying ceiling")
 
 
 def check_min_bedrooms(prop: dict, enrichment: dict | None, config: dict) -> GateResult:
@@ -330,7 +331,7 @@ def check_lease_length(prop: dict, enrichment: dict | None, config: dict) -> Gat
         lease_years = prop.get("lease_years")
 
         if lease_years is None:
-            return GateResult("lease_length", False, "Lease length unknown")
+            return GateResult("lease_length", True, "SOF lease length unknown — needs verification", needs_verification=True)
         if lease_years < min_years:
             return GateResult("lease_length", False, f"SOF lease {lease_years}yr < minimum {min_years}yr")
         return GateResult("lease_length", True, f"SOF lease {lease_years}yr (extension ~£1k)")
@@ -340,7 +341,7 @@ def check_lease_length(prop: dict, enrichment: dict | None, config: dict) -> Gat
         lease_years = prop.get("lease_years")
 
         if lease_years is None:
-            return GateResult("lease_length", False, "Lease length unknown")
+            return GateResult("lease_length", True, "Lease length unknown — needs verification", needs_verification=True)
         if lease_years < min_years:
             return GateResult("lease_length", False, f"Lease {lease_years}yr < minimum {min_years}yr")
         return GateResult("lease_length", True, f"Lease {lease_years}yr")
@@ -360,7 +361,7 @@ def check_service_charge(prop: dict, enrichment: dict | None, config: dict) -> G
         sc = prop.get("service_charge_pa")
 
         if sc is None:
-            return GateResult("service_charge", False, "Service charge unknown")
+            return GateResult("service_charge", True, "Service charge unknown — needs verification", needs_verification=True)
         if sc > max_sc:
             return GateResult("service_charge", False, f"SC £{sc}/yr exceeds cap £{max_sc}/yr")
         return GateResult("service_charge", True, f"SC £{sc}/yr within cap £{max_sc}/yr")
@@ -380,7 +381,7 @@ def check_ground_rent(prop: dict, enrichment: dict | None, config: dict) -> Gate
         gr = prop.get("ground_rent_pa")
 
         if gr is None:
-            return GateResult("ground_rent", False, "Ground rent unknown")
+            return GateResult("ground_rent", True, "Ground rent unknown — needs verification", needs_verification=True)
         if gr > max_gr:
             return GateResult("ground_rent", False, f"GR £{gr}/yr exceeds cap £{max_gr}/yr")
         return GateResult("ground_rent", True, f"GR £{gr}/yr within cap £{max_gr}/yr")
@@ -405,13 +406,13 @@ def check_no_doubling_clause(prop: dict, enrichment: dict | None, config: dict) 
 
 
 def check_no_tbc_fields(prop: dict, enrichment: dict | None, config: dict) -> GateResult:
-    """Reject if critical leasehold fields are TBC/unknown."""
+    """Flag if critical leasehold fields are TBC/unknown — needs verification."""
     tenure = _get_tenure(prop)
     if tenure == "freehold":
         return GateResult("no_tbc_fields", True, "Freehold — N/A")
 
     if tenure not in ("leasehold", "share_of_freehold"):
-        return GateResult("no_tbc_fields", False, "Tenure unknown")
+        return GateResult("no_tbc_fields", True, "Tenure unknown — needs verification", needs_verification=True)
 
     text = _get_description_lower(prop)
     tbc_phrases = ["tbc", "to be confirmed", "ask agent", "awaiting details", "contact agent"]
@@ -428,8 +429,9 @@ def check_no_tbc_fields(prop: dict, enrichment: dict | None, config: dict) -> Ga
                     context = text[start:end]
                     if field in context:
                         return GateResult(
-                            "no_tbc_fields", False,
-                            f"'{phrase}' found near '{field}' in description"
+                            "no_tbc_fields", True,
+                            f"'{phrase}' found near '{field}' — needs verification",
+                            needs_verification=True,
                         )
 
     return GateResult("no_tbc_fields", True, "No TBC fields detected")

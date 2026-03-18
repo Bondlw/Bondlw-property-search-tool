@@ -225,14 +225,14 @@ class FinancialCalculator:
             price_cap = budget.get("leasehold", {}).get("absolute_max", 180000)
             price_cap_pass = offer_price <= price_cap
 
-        monthly_would_qualify = offer_costs["total_monthly"] <= self.monthly_target_min
+        monthly_would_qualify = offer_costs["total_monthly"] <= self.monthly_target_max
         would_qualify = price_cap_pass and monthly_would_qualify
 
         notes = []
         if not price_cap_pass:
             notes.append(f"Still above price cap at £{offer_price:,}")
         if not monthly_would_qualify:
-            notes.append(f"Monthly £{offer_costs['total_monthly']:,.0f} still over £{self.monthly_target_min} GREEN target")
+            notes.append(f"Monthly £{offer_costs['total_monthly']:,.0f} still over £{self.monthly_target_max} qualifying ceiling")
 
         return {
             "suggested_offer": offer_price,
