@@ -83,6 +83,9 @@ def run(ctx, portal, area, skip_detail):
         total_updated = 0
         errors = []
 
+        excluded_terms = [t.lower() for t in config.get("excluded_address_terms", [])]
+        total_excluded = 0
+
         for area_config in areas_list:
             area_name = area_config["name"]
             click.echo(f"\nSearching {area_name}...")
@@ -93,6 +96,11 @@ def run(ctx, portal, area, skip_detail):
                     total_found += len(listings)
 
                     for listing in listings:
+                        addr_lower = (listing.address or listing.title or "").lower()
+                        if any(term in addr_lower for term in excluded_terms):
+                            total_excluded += 1
+                            continue
+
                         url_norm = normalise_url(listing.url)
                         existing_id = repo.property_exists(listing.portal, listing.portal_id)
 
@@ -110,7 +118,7 @@ def run(ctx, portal, area, skip_detail):
                     logger.error(error_msg)
                     errors.append(error_msg)
 
-        click.echo(f"\nSearch: Found {total_found} | New: {total_new} | Updated: {total_updated}")
+        click.echo(f"\nSearch: Found {total_found} | New: {total_new} | Updated: {total_updated} | Excluded: {total_excluded}")
 
         # Step 2: Fetch details
         if not skip_detail:
@@ -266,6 +274,9 @@ def search(ctx, portal, area):
         total_updated = 0
         errors = []
 
+        excluded_terms = [t.lower() for t in config.get("excluded_address_terms", [])]
+        total_excluded = 0
+
         for area_config in areas:
             area_name = area_config["name"]
             click.echo(f"\nSearching {area_name}...")
@@ -276,6 +287,11 @@ def search(ctx, portal, area):
                     total_found += len(listings)
 
                     for listing in listings:
+                        addr_lower = (listing.address or listing.title or "").lower()
+                        if any(term in addr_lower for term in excluded_terms):
+                            total_excluded += 1
+                            continue
+
                         url_norm = normalise_url(listing.url)
 
                         # Check if exists
@@ -779,6 +795,33 @@ def exclude_list():
 
 # Register exclude subgroup
 cli.add_command(exclude)
+
+@cli.command("floorplan-size")
+@click.option("--limit", default=0, help="Max properties to process (0=all)")
+@click.option("--api-key", envvar="ANTHROPIC_API_KEY", default=None, help="Anthropic API key")
+@click.pass_context
+def floorplan_size(ctx, limit, api_key):
+    """Extract size_sqft from floor plan images using Claude vision."""
+    if not api_key:
+        click.echo("Error: ANTHROPIC_API_KEY not set. Pass --api-key or set the env var.", err=True)
+        raise SystemExit(1)
+    db_path = get_db_path()
+    from .enrichment.floorplan_vision import run_floorplan_size_extraction
+    with Database(db_path) as db:
+        rows = db.conn.execute(
+            """SELECT COUNT(*) FROM properties
+               WHERE size_sqft IS NULL AND floorplan_urls IS NOT NULL
+                 AND floorplan_urls != "[]" AND floorplan_urls != ""
+                 AND is_active = 1"""
+        ).fetchone()
+        eligible = rows[0]
+    to_process = min(eligible, limit) if limit else eligible
+    click.echo(f"Found {eligible} properties with floor plans but no size data.")
+    click.echo(f"Processing {to_process} (each costs ~1 Haiku vision call)...")
+    updated = run_floorplan_size_extraction(db_path, api_key, limit=limit, delay=0.3)
+    click.echo(f"Done - extracted size for {updated} properties.")
+    if updated:
+        click.echo("Run: py -m src report")
 
 
 def main():

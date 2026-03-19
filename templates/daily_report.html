@@ -547,6 +547,8 @@
   data-ct-monthly="{{ prop._costs.council_tax_monthly|int if prop._costs else 0 }}"
   data-station-walk="{{ prop._station_walk_min or 999 }}"
   data-commute-london="{{ prop._commute_london_min or 999 }}"
+  data-size-sqft="{{ prop._size_sqft or 0 }}"
+  data-ppsf="{{ prop._price_per_sqft or 0 }}"
   data-lat="{{ prop._latitude or '' }}"
   data-lng="{{ prop._longitude or '' }}"
   data-area="{{ prop._search_area or '' }}"
@@ -634,6 +636,8 @@
     <span class="tag">{{ prop.property_type or '?' }}</span>
     {% if prop.bedrooms %}<span class="tag">{{ prop.bedrooms }} bed</span>{% endif %}
     {% if prop.bathrooms %}<span class="tag">{{ prop.bathrooms }} bath</span>{% endif %}
+    {% if prop._size_sqft %}<span class="tag" style="font-weight:600;">{{ prop._size_sqft }} sqft</span>{% endif %}
+    {% if prop._price_per_sqft %}<span class="tag" style="color:var(--accent);">£{{ prop._price_per_sqft }}/sqft</span>{% endif %}
     {% set tenure_display = {'freehold': 'Freehold', 'leasehold': 'Leasehold', 'share_of_freehold': 'Share of Freehold'} %}
     {% if prop.tenure %}<span class="tag tenure {% if prop.tenure == 'share_of_freehold' %}sof{% endif %}">{{ tenure_display.get(prop.tenure, prop.tenure) }}</span>{% endif %}
     {% if prop.lease_years %}<span class="tag {% if prop.lease_years < 120 %}bad{% elif prop.lease_years < 200 %}warn{% else %}good{% endif %}">{{ prop.lease_years }}yr lease</span>{% endif %}
@@ -833,9 +837,9 @@
   {% endif %}
 
   {# Price history — condensed: latest change inline, full collapsible #}
-  {% if prop._price_history and prop._price_history|length > 1 %}
+  {% if prop._price_history and prop._price_history|length >= 1 %}
   <details class="rooms-section">
-    <summary>Price history ({{ prop._price_history|length }} entries)</summary>
+    <summary>Price history ({{ prop._price_history|length }} entr{{ 'y' if prop._price_history|length == 1 else 'ies' }})</summary>
     <div class="price-history-timeline" style="margin-top:4px;">
       {% for entry in prop._price_history %}
       <div class="ph-entry">
@@ -875,6 +879,7 @@
     <select id="tracking-{{ prop.id }}" onchange="saveTracking({{ prop.id }}, this.value)" style="font-size:0.72rem;padding:2px 4px;border-radius:3px;border:1px solid var(--border);background:var(--score-bg);color:var(--text);">
       <option value="new">New</option>
       <option value="reviewing">Reviewing</option>
+      <option value="enquired">Enquired</option>
       <option value="contacted">Contacted</option>
       <option value="viewing_booked">Viewing Booked</option>
       <option value="viewed">Viewed</option>
@@ -1210,6 +1215,9 @@
       <option value="dom-desc">Days listed ↓</option>
       <option value="station-asc">Station walk ↑</option>
       <option value="commute-asc">London commute ↑</option>
+      <option value="ppsf-asc">£/sqft ↑ (best value)</option>
+      <option value="ppsf-desc">£/sqft ↓</option>
+      <option value="size-desc">Size ↓ (biggest)</option>
       <option value="newest">Newest first</option>
     </select>
   </div>
@@ -1726,8 +1734,10 @@ function _weekendDates() {
   const daysToSat = day === 6 ? 7 : (6 - day); // if already Sat, get next Sat
   const sat = new Date(now); sat.setDate(now.getDate() + daysToSat);
   const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
+  const sat2 = new Date(sat); sat2.setDate(sat.getDate() + 7);
+  const sun2 = new Date(sat2); sun2.setDate(sat2.getDate() + 1);
   const fmt = d => d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-  return { sat: fmt(sat), sun: fmt(sun) };
+  return { sat: fmt(sat), sun: fmt(sun), sat2: fmt(sat2), sun2: fmt(sun2) };
 }
 
 function sendEnquiry(dbId, portalId, address, agent, url, price) {
@@ -1743,7 +1753,7 @@ function sendEnquiry(dbId, portalId, address, agent, url, price) {
   if (userPhone)    localStorage.setItem('cfg-user-phone', userPhone);
   if (userPostcode) localStorage.setItem('cfg-user-postcode', userPostcode);
 
-  const { sat, sun } = _weekendDates();
+  const { sat, sun, sat2, sun2 } = _weekendDates();
 
   const message = `Dear ${agent},
 
@@ -1751,11 +1761,11 @@ I am writing to enquire about the property listed at ${address} (${priceFormatte
 
 ${url}
 
-I am a first-time buyer with a mortgage agreement in principle and a deposit ready. I would love to arrange a viewing this weekend — I am available on ${sat} or ${sun} and would be grateful if you could confirm a convenient time.
+I am a proceedable buyer — I have a mortgage agreement in principle, a deposit ready, and my current property is already under offer, so I can move quickly.
 
-Could you please also let me know:
-1. Whether there has been any interest or offers on the property
-2. Any additional information about the property not covered in the listing
+I would love to arrange a viewing and am available this weekend (${sat} or ${sun}) or next week (${sat2} or ${sun2}). Please let me know what time works best.
+
+Could you also confirm whether there has been any interest or other offers on the property?
 
 I look forward to hearing from you.
 
@@ -1769,17 +1779,17 @@ Kind regards${userName ? '\n' + userName : ''}${userPhone ? '\nTel: ' + userPhon
       .then(d => showToast(d.message || 'Form opened — solve the CAPTCHA and click Send!'))
       .catch(() => _fallbackEnquiry(portalId, message));
     // Auto-set status to Contacted
-    saveTracking(dbId, 'contacted');
+    saveTracking(dbId, 'enquired');
     const sel = document.getElementById('tracking-' + dbId);
-    if (sel) sel.value = 'contacted';
+    if (sel) sel.value = 'enquired';
     return;
   }
   _fallbackEnquiry(portalId, message);
   // Auto-set status to Contacted
   if (dbId) {
-    saveTracking(dbId, 'contacted');
+    saveTracking(dbId, 'enquired');
     const sel = document.getElementById('tracking-' + dbId);
-    if (sel) sel.value = 'contacted';
+    if (sel) sel.value = 'enquired';
   }
 }
 
@@ -1891,7 +1901,10 @@ function sortCards(val) {
         case 'dom-desc':      return (parseInt(b.dataset.dom)||0) - (parseInt(a.dataset.dom)||0);
         case 'station-asc':   return (parseInt(a.dataset.stationWalk)||999) - (parseInt(b.dataset.stationWalk)||999);
         case 'commute-asc':   return (parseInt(a.dataset.commuteLondon)||999) - (parseInt(b.dataset.commuteLondon)||999);
-        case 'newest':        return (parseInt(b.dataset.dom)||0) < (parseInt(a.dataset.dom)||0) ? 1 : -1;
+        case 'ppsf-asc':      return (parseInt(a.dataset.ppsf)||99999) - (parseInt(b.dataset.ppsf)||99999);
+        case 'ppsf-desc':     return (parseInt(b.dataset.ppsf)||0) - (parseInt(a.dataset.ppsf)||0);
+        case 'size-desc':     return (parseInt(b.dataset.sizeSqft)||0) - (parseInt(a.dataset.sizeSqft)||0);
+        case 'newest':        return (parseInt(a.dataset.dom)||0) - (parseInt(b.dataset.dom)||0);
         default: return 0;
       }
     });

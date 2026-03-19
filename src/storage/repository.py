@@ -74,11 +74,11 @@ class PropertyRepository:
         )
         prop_id = cursor.lastrowid
 
-        # Record initial price in history
+        # Record initial price in history — use portal listing date if available
         self.db.conn.execute(
             """INSERT INTO price_history (property_id, price, recorded_date)
                VALUES (?, ?, ?)""",
-            (prop_id, listing.price, today),
+            (prop_id, listing.price, listing.first_listed_date or today),
         )
         self.db.conn.commit()
         return prop_id
@@ -159,6 +159,7 @@ class PropertyRepository:
             "video_url": listing.video_url,
             "brochure_url": listing.brochure_url,
             "rooms": json.dumps(listing.rooms) if listing.rooms else None,
+            "size_sqft": listing.size_sqft,
         }
 
         for col, val in detail_fields.items():
@@ -212,12 +213,99 @@ class PropertyRepository:
         return [dict(r) for r in rows]
 
     def get_price_history(self, prop_id: int) -> list[dict]:
-        """Get price history for a property."""
-        rows = self.db.conn.execute(
-            "SELECT * FROM price_history WHERE property_id = ? ORDER BY recorded_date",
+        """Get price history for a property, including cross-listing history.
+
+        Finds other listings of the same physical property (re-listings with
+        new portal IDs) by matching on street name + lat/lng proximity, then
+        merges their price records into a single timeline.
+        """
+        # Get this property's details for cross-referencing
+        prop = self.db.conn.execute(
+            "SELECT address, latitude, longitude FROM properties WHERE id = ?",
             (prop_id,),
+        ).fetchone()
+
+        if not prop or not prop["address"]:
+            rows = self.db.conn.execute(
+                "SELECT * FROM price_history WHERE property_id = ? ORDER BY recorded_date",
+                (prop_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        address = prop["address"].strip()
+        street = address.split(",")[0].strip()
+        if len(street) < 5:
+            rows = self.db.conn.execute(
+                "SELECT * FROM price_history WHERE property_id = ? ORDER BY recorded_date",
+                (prop_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        # Find candidates with the same street name
+        candidates = self.db.conn.execute(
+            """SELECT id, latitude, longitude FROM properties
+               WHERE LOWER(TRIM(SUBSTR(address, 1, INSTR(address || ',', ',') - 1))) = ?""",
+            (street.lower(),),
         ).fetchall()
-        return [dict(r) for r in rows]
+
+        # Filter to same physical location using lat/lng proximity (~50m radius)
+        lat = prop["latitude"]
+        lng = prop["longitude"]
+        related_ids = [prop_id]
+
+        if lat and lng:
+            for c in candidates:
+                if c["id"] == prop_id:
+                    continue
+                c_lat, c_lng = c["latitude"], c["longitude"]
+                if c_lat and c_lng:
+                    # ~50m threshold: 0.0005 degrees ≈ 55m at UK latitudes
+                    if abs(c_lat - lat) < 0.0005 and abs(c_lng - lng) < 0.0005:
+                        related_ids.append(c["id"])
+        else:
+            # No coordinates — fall back to just street match (less reliable)
+            related_ids = [c["id"] for c in candidates]
+
+        if len(related_ids) <= 1:
+            rows = self.db.conn.execute(
+                "SELECT * FROM price_history WHERE property_id = ? ORDER BY recorded_date",
+                (prop_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        # Merge price histories from all related listings
+        placeholders = ",".join("?" for _ in related_ids)
+        rows = self.db.conn.execute(
+            f"""SELECT ph.*, p.first_listed_date
+                FROM price_history ph
+                JOIN properties p ON p.id = ph.property_id
+                WHERE ph.property_id IN ({placeholders})
+                ORDER BY COALESCE(p.first_listed_date, ph.recorded_date), ph.recorded_date, ph.price""",
+            related_ids,
+        ).fetchall()
+
+        # Deduplicate — skip consecutive entries at the same price (re-listings)
+        merged = []
+        last_price = None
+        for r in rows:
+            if r["price"] == last_price:
+                continue
+            merged.append(dict(r))
+            last_price = r["price"]
+
+        # Recalculate change_amount and change_pct for the merged timeline
+        for i, entry in enumerate(merged):
+            if i == 0:
+                entry["change_amount"] = None
+                entry["change_pct"] = None
+            else:
+                prev_price = merged[i - 1]["price"]
+                entry["change_amount"] = entry["price"] - prev_price
+                entry["change_pct"] = round(
+                    (entry["change_amount"] / prev_price) * 100, 2
+                ) if prev_price else None
+
+        return merged
 
     def get_reduced_properties(self) -> list[dict]:
         """Get properties that have had price reductions."""

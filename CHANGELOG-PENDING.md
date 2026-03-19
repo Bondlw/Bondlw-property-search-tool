@@ -26,3 +26,7 @@
 - 2026-03-17 17:39:54 [modified] `templates/daily_report.html`
 - 2026-03-17 17:44:20 [modified] `src/filtering/hard_gates.py`
 - 2026-03-17 17:47:18 [added] `output/reports/report_2026-03-17.html`
+
+## 2026-03-19
+
+- 2026-03-19 20:14:27 [added] `C:\Users\liam.bond\Documents\Property Search Tool\src\enrichment\floorplan_vision.py`

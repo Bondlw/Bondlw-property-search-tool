@@ -162,6 +162,11 @@ class ReportGenerator:
                 prop["_supermarket_walk_min"] = enrichment.get("nearest_supermarket_walk_min")
                 prop["_avg_sold_price"] = enrichment.get("avg_sold_price_nearby")
 
+            # Size and price-per-sqft
+            size = prop.get("size_sqft")
+            prop["_size_sqft"] = size
+            prop["_price_per_sqft"] = round(prop["price"] / size) if size else None
+
             # Office distance (miles, straight-line)
             office_cfg = self.config.get("office")
             if enrichment:

@@ -29,6 +29,7 @@ class RawListing:
     video_url: Optional[str] = None
     brochure_url: Optional[str] = None
     rooms: list = field(default_factory=list)  # [{name, width, length, unit}]
+    size_sqft: Optional[int] = None
     images: list = field(default_factory=list)
     agent_name: Optional[str] = None
     first_listed_date: Optional[str] = None

@@ -350,11 +350,21 @@ class RightmoveScraper(BaseScraper):
                     if img_url:
                         images.append(img_url)
 
-            # Floor plans
+            # Floor plans - try multiple Rightmove key names
             floorplan_urls = []
-            for fp in (prop_data.get("floorplanImages") or []):
+            raw_fps = (
+                prop_data.get("floorplanImages")
+                or prop_data.get("floorplans")
+                or prop_data.get("floorPlanImages")
+                or []
+            )
+            for fp in raw_fps:
                 if isinstance(fp, dict):
-                    fp_url = fp.get("url") or fp.get("srcUrl")
+                    fp_url = (
+                        fp.get("url")
+                        or fp.get("srcUrl")
+                        or ((fp.get("resizedImages") or [{}])[0].get("url"))
+                    )
                     if fp_url:
                         floorplan_urls.append(fp_url)
 
@@ -362,6 +372,26 @@ class RightmoveScraper(BaseScraper):
             property_urls = prop_data.get("propertyUrls") or {}
             video_url = property_urls.get("virtualTourUrl") or None
             brochure_url = property_urls.get("brochureUrl") or None
+
+            # Property size from sizings data
+            size_sqft = None
+            for sizing in (prop_data.get("sizings") or []):
+                if not isinstance(sizing, dict):
+                    continue
+                if sizing.get("unit") == "sqft":
+                    size_sqft = int(sizing.get("minimumSize") or 0) or None
+                    break
+                if sizing.get("unit") == "sqm":
+                    sqm = sizing.get("minimumSize") or 0
+                    if sqm:
+                        size_sqft = int(float(sqm) * 10.7639)
+                    break
+            # Fallback: extract sq ft from description
+            if not size_sqft:
+                import re as _re
+                m = _re.search(r"(\d[\d,]*)\s*(?:sq\.?\s*ft|sqft)", description or "", _re.IGNORECASE)
+                if m:
+                    size_sqft = int(m.group(1).replace(",", "")) or None
 
             # Room dimensions
             rooms = []
@@ -403,6 +433,7 @@ class RightmoveScraper(BaseScraper):
                 video_url=video_url,
                 brochure_url=brochure_url,
                 rooms=rooms,
+                size_sqft=size_sqft,
                 agent_name=(
                     prop_data.get("customer", {}).get("branchDisplayName")
                     or prop_data.get("customer", {}).get("brandTradingName")

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS properties (
     video_url TEXT,
     brochure_url TEXT,
     rooms TEXT,
+    size_sqft INTEGER,
     price_reduced INTEGER DEFAULT 0,
     agent_name TEXT,
     latitude REAL,
