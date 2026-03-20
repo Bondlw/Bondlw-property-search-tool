@@ -201,9 +201,11 @@ def run(ctx, portal, area, skip_detail):
         generator = ReportGenerator(config)
         fav_ids = repo.get_favourite_ids()
         excl_ids = repo.get_excluded_ids()
+        tracking_statuses = repo.get_all_tracking_statuses()
         path = generator.generate(properties, output_path, enrichment_map,
                                   favourite_ids=fav_ids, excluded_ids=excl_ids,
-                                  price_history_map=price_history_map)
+                                  price_history_map=price_history_map,
+                                  tracking_statuses=tracking_statuses)
 
         duration = time.time() - start_time
 
@@ -631,9 +633,11 @@ def report(ctx):
         generator = ReportGenerator(config)
         fav_ids = repo.get_favourite_ids()
         excl_ids = repo.get_excluded_ids()
+        tracking_statuses = repo.get_all_tracking_statuses()
         path = generator.generate(properties, output_path, enrichment_map,
                                   favourite_ids=fav_ids, excluded_ids=excl_ids,
-                                  price_history_map=price_history_map)
+                                  price_history_map=price_history_map,
+                                  tracking_statuses=tracking_statuses)
 
         click.echo(f"Report saved: {path}")
 

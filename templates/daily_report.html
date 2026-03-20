@@ -174,7 +174,11 @@
   }
   .action-btn:hover { background: var(--score-bg); color: var(--text); }
   .action-btn.fav-active { color: var(--fav); background: rgba(245,158,11,0.15); border-color: var(--fav); }
+  .action-btn.shortlist-active { color: var(--green); background: rgba(34,197,94,0.15); border-color: var(--green); }
   .action-btn.excl-active { color: var(--red); background: rgba(248,113,113,0.15); border-color: var(--red); }
+
+  /* Status badge on card */
+  .badge.status-shortlisted { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid var(--green); }
 
   /* Tags row */
   .card-meta { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; font-size: var(--text-xs); }
@@ -552,6 +556,7 @@
   data-lat="{{ prop._latitude or '' }}"
   data-lng="{{ prop._longitude or '' }}"
   data-area="{{ prop._search_area or '' }}"
+  data-tracking="{{ prop._tracking_status or 'new' }}"
   id="card-{{ prop.id }}">
 
   {# Image carousel #}
@@ -617,6 +622,9 @@
       <button class="action-btn {% if prop._is_favourite %}fav-active{% endif %}" onclick="toggleFavourite(event, {{ prop.id }})" title="{% if prop._is_favourite %}Remove from favourites{% else %}Add to favourites{% endif %}" aria-label="{% if prop._is_favourite %}Remove from favourites{% else %}Add to favourites{% endif %}">
         {% if prop._is_favourite %}&#9733;{% else %}&#9734;{% endif %}
       </button>
+      <button class="action-btn shortlist-btn {% if prop._tracking_status == 'shortlisted' %}shortlist-active{% endif %}" onclick="toggleShortlist(event, {{ prop.id }})" title="{% if prop._tracking_status == 'shortlisted' %}Remove from shortlist{% else %}Add to shortlist{% endif %}" aria-label="{% if prop._tracking_status == 'shortlisted' %}Remove from shortlist{% else %}Add to shortlist{% endif %}">
+        &#10003;
+      </button>
       <button class="action-btn {% if prop._is_excluded %}excl-active{% endif %}" onclick="toggleExclude({{ prop.id }})" title="{% if prop._is_excluded %}Restore to reports{% else %}Exclude from reports{% endif %}" aria-label="{% if prop._is_excluded %}Restore to reports{% else %}Exclude from reports{% endif %}">
         &#10005;
       </button>
@@ -662,8 +670,8 @@
       <span class="pct">{{ prop._costs.all_in_pct_take_home }}%</span>
       <span class="cost-breakdown-inline">
         mtg £{{ prop._costs.mortgage_monthly|int }}
-        {% if prop._costs.service_charge_monthly > 0 %} · SC £{{ prop._costs.service_charge_monthly|int }}{% endif %}
-        {% if prop._costs.ground_rent_monthly > 0 %} · GR £{{ prop._costs.ground_rent_monthly|int }}{% endif %}
+        {% if prop._costs.service_charge_monthly > 0 %}· SC £{{ prop._costs.service_charge_monthly|int }}{% endif %}
+        {% if prop._costs.ground_rent_monthly > 0 %}· GR £{{ prop._costs.ground_rent_monthly|int }}{% endif %}
         {% if prop._costs.council_tax_monthly > 0 %} · CT £{{ prop._costs.council_tax_monthly|int }}{% if prop._costs.council_tax_estimated %}~{% endif %}{% endif %}
         · bills £{{ config.estimated_bills.total_monthly | default(211) }}
       </span>
@@ -877,15 +885,15 @@
   <div style="display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap;">
     <span style="font-size:0.68rem;font-weight:600;color:var(--muted);">Status:</span>
     <select id="tracking-{{ prop.id }}" onchange="saveTracking({{ prop.id }}, this.value)" style="font-size:0.72rem;padding:2px 4px;border-radius:3px;border:1px solid var(--border);background:var(--score-bg);color:var(--text);">
-      <option value="new">New</option>
-      <option value="reviewing">Reviewing</option>
-      <option value="enquired">Enquired</option>
-      <option value="contacted">Contacted</option>
-      <option value="viewing_booked">Viewing Booked</option>
-      <option value="viewed">Viewed</option>
-      <option value="offer_made">Offer Made</option>
-      <option value="rejected">Rejected</option>
-      <option value="archived">Archived</option>
+      <option value="new"{% if prop._tracking_status == 'new' %} selected{% endif %}>New</option>
+      <option value="shortlisted"{% if prop._tracking_status == 'shortlisted' %} selected{% endif %}>Shortlisted</option>
+      <option value="reviewing"{% if prop._tracking_status == 'reviewing' %} selected{% endif %}>Reviewing</option>
+      <option value="contacted"{% if prop._tracking_status == 'contacted' %} selected{% endif %}>Contacted</option>
+      <option value="viewing_booked"{% if prop._tracking_status == 'viewing_booked' %} selected{% endif %}>Viewing Booked</option>
+      <option value="viewed"{% if prop._tracking_status == 'viewed' %} selected{% endif %}>Viewed</option>
+      <option value="offer_made"{% if prop._tracking_status == 'offer_made' %} selected{% endif %}>Offer Made</option>
+      <option value="rejected"{% if prop._tracking_status == 'rejected' %} selected{% endif %}>Rejected</option>
+      <option value="archived"{% if prop._tracking_status == 'archived' %} selected{% endif %}>Archived</option>
     </select>
     <span class="note-saved" id="note-saved-{{ prop.id }}" style="font-size:0.62rem;color:var(--green);opacity:0;transition:opacity 0.3s;">✓ Saved</span>
   </div>
@@ -1136,6 +1144,7 @@
 
 {# Sticky navigation #}
 <nav class="nav" id="nav">
+  <a href="#sec-shortlisted">Shortlisted <span class="badge-count" id="nav-shortlist-count">{{ shortlisted|length }}</span></a>
   <a href="#sec-favourites">Favourites <span class="badge-count" id="nav-fav-count">{{ favourites|length }}</span></a>
   <a href="#sec-viewings" id="nav-viewings">Viewings <span class="badge-count" id="nav-viewings-count">0</span></a>
   <a href="#sec-qualifying">Qualifying <span class="badge-count" id="nav-qualifying-count">{{ qualifying_count }}</span></a>
@@ -1204,6 +1213,21 @@
   <div class="filter-group">
     <label>Max £/mo</label>
     <input type="number" id="filter-monthly" min="0" placeholder="any" step="50" oninput="applyFilters()">
+  </div>
+  <div class="filter-group">
+    <label>Status</label>
+    <select id="filter-status" title="Filter by tracking status" onchange="applyFilters()">
+      <option value="">All</option>
+      <option value="new">New</option>
+      <option value="shortlisted">Shortlisted</option>
+      <option value="reviewing">Reviewing</option>
+      <option value="contacted">Contacted</option>
+      <option value="viewing_booked">Viewing Booked</option>
+      <option value="viewed">Viewed</option>
+      <option value="offer_made">Offer Made</option>
+      <option value="rejected">Rejected</option>
+      <option value="archived">Archived</option>
+    </select>
   </div>
   <div class="filter-group">
     <label>Sort</label>
@@ -1281,7 +1305,18 @@
   </div>
 </div>
 
-{# ---- Favourites (always at top, open) ---- #}
+{# ---- Shortlisted (always at top, open) ---- #}
+<details {{ 'open' if shortlisted }} id="sec-shortlisted">
+  <summary>Shortlisted <span class="count" id="shortlist-count">({{ shortlisted|length }})</span></summary>
+  <div class="cards" id="shortlist-cards">
+  {% for prop in shortlisted %}
+    {{ render_card(prop, "shortlisted", section_label="shortlisted") }}
+  {% endfor %}
+  </div>
+  <div class="empty-state" id="shortlist-empty"{% if shortlisted %} style="display:none"{% endif %}>No shortlisted properties yet. Click the &#10003; on any card to shortlist it.</div>
+</details>
+
+{# ---- Favourites ---- #}
 <details open id="sec-favourites">
   <summary>Favourites <span class="count" id="fav-count">({{ favourites|length }})</span></summary>
   <div class="cards" id="fav-cards">
@@ -1513,10 +1548,33 @@ function applyStoredState() {
   s.excl.forEach(id => {
     const card = document.getElementById('card-' + id);
     if (!card) return;
-    const btn = card.querySelectorAll('.action-btn')[1];
+    const btn = card.querySelectorAll('.action-btn')[2];
     if (btn) btn.classList.add('excl-active');
     card.style.display = 'none';
   });
+
+  // Restore shortlisted state from localStorage
+  const shortlistCards = document.getElementById('shortlist-cards');
+  const shortlistEmpty = document.getElementById('shortlist-empty');
+  const shortlistCount = document.getElementById('shortlist-count');
+  const trackings = s.trackings || {};
+  Object.entries(trackings).forEach(([id, status]) => {
+    if (status !== 'shortlisted') return;
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    const btn = card.querySelector('.shortlist-btn');
+    if (btn) { btn.classList.add('shortlist-active'); btn.title = 'Remove from shortlist'; }
+    card.dataset.tracking = 'shortlisted';
+    if (shortlistCards && !card.closest('#sec-shortlisted')) {
+      if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+      shortlistCards.prepend(card);
+    }
+  });
+  if (shortlistCards) {
+    const n = shortlistCards.querySelectorAll('.property-card').length;
+    if (shortlistEmpty) shortlistEmpty.style.display = n > 0 ? 'none' : '';
+    if (shortlistCount) shortlistCount.textContent = `(${n})`;
+  }
 }
 document.addEventListener('DOMContentLoaded', applyStoredState);
 
@@ -1628,7 +1686,7 @@ function toggleFavourite(evt, id) {
 
 function toggleExclude(id) {
   const card = document.getElementById('card-' + id);
-  const btn = card.querySelectorAll('.action-btn')[1];
+  const btn = card.querySelectorAll('.action-btn')[2];
   const s = loadState();
   const idx = s.excl.indexOf(id);
   if (idx === -1) {
@@ -1647,6 +1705,56 @@ function toggleExclude(id) {
     const ep = idx === -1 ? '/api/exclude/' : '/api/unexclude/';
     fetch(ep + id, {method:'POST'}).catch(()=>{});
   }
+}
+
+function toggleShortlist(evt, id) {
+  const card = evt.target.closest('.property-card');
+  const btn  = card.querySelector('.shortlist-btn');
+  const isShortlisted = btn.classList.contains('shortlist-active');
+  const newStatus = isShortlisted ? 'new' : 'shortlisted';
+  const shortlistCards = document.getElementById('shortlist-cards');
+  const shortlistEmpty = document.getElementById('shortlist-empty');
+  const shortlistCount = document.getElementById('shortlist-count');
+
+  if (!isShortlisted) {
+    btn.classList.add('shortlist-active');
+    btn.title = 'Remove from shortlist';
+    card.dataset.tracking = 'shortlisted';
+    if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+    if (shortlistCards && !card.closest('#sec-shortlisted')) shortlistCards.prepend(card);
+    if (shortlistEmpty) shortlistEmpty.style.display = 'none';
+    showToast('✓ Added to shortlist');
+  } else {
+    btn.classList.remove('shortlist-active');
+    btn.title = 'Add to shortlist';
+    card.dataset.tracking = 'new';
+    const srcId = card.dataset.srcSection;
+    if (srcId && document.getElementById(srcId)) {
+      const srcCards = document.getElementById(srcId).querySelector('.cards');
+      if (srcCards) srcCards.appendChild(card);
+    }
+    showToast('Removed from shortlist');
+  }
+
+  const n = shortlistCards?.querySelectorAll('.property-card').length || 0;
+  if (shortlistEmpty) shortlistEmpty.style.display = n === 0 ? '' : 'none';
+  if (shortlistCount) shortlistCount.textContent = `(${n})`;
+
+  // Persist via localStorage
+  const s = loadState();
+  s.trackings = s.trackings || {};
+  s.trackings[id] = newStatus;
+  saveState(s);
+
+  // Persist via server
+  if (location.protocol !== 'file:') {
+    fetch('/api/tracking/' + id, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({status: newStatus})
+    }).catch(() => {});
+  }
+  updateNavCounts();
 }
 
 // Notes + Tracking
@@ -1680,7 +1788,41 @@ function saveTracking(id, status) {
       body: JSON.stringify({status: status})
     }).catch(()=>{});
   }
+
+  // Sync shortlist button and card position
+  const card = document.getElementById('card-' + id);
+  if (card) {
+    const btn = card.querySelector('.shortlist-btn');
+    const shortlistCards = document.getElementById('shortlist-cards');
+    const shortlistEmpty = document.getElementById('shortlist-empty');
+    const shortlistCount = document.getElementById('shortlist-count');
+    card.dataset.tracking = status;
+
+    if (status === 'shortlisted') {
+      if (btn) { btn.classList.add('shortlist-active'); btn.title = 'Remove from shortlist'; }
+      if (shortlistCards && !card.closest('#sec-shortlisted')) {
+        if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+        shortlistCards.prepend(card);
+      }
+    } else {
+      if (btn) { btn.classList.remove('shortlist-active'); btn.title = 'Add to shortlist'; }
+      if (card.closest('#sec-shortlisted')) {
+        const srcId = card.dataset.srcSection;
+        if (srcId && document.getElementById(srcId)) {
+          const srcCards = document.getElementById(srcId).querySelector('.cards');
+          if (srcCards) srcCards.appendChild(card);
+        }
+      }
+    }
+    if (shortlistCards) {
+      const n = shortlistCards.querySelectorAll('.property-card').length;
+      if (shortlistEmpty) shortlistEmpty.style.display = n > 0 ? 'none' : '';
+      if (shortlistCount) shortlistCount.textContent = `(${n})`;
+    }
+  }
+
   showToast('Status → ' + status.replace(/_/g, ' '));
+  updateNavCounts();
 }
 
 function loadNotesAndTrackings() {
@@ -1716,10 +1858,36 @@ function loadNotesAndTrackings() {
         Object.entries(data.trackings).forEach(([id, status]) => {
           const el = document.getElementById('tracking-' + id);
           if (el && status) el.value = status;
+          const card = document.getElementById('card-' + id);
+          if (card) card.dataset.tracking = status;
           s.trackings = s.trackings || {};
           s.trackings[id] = status;
         });
         saveState(s);
+        // Refresh shortlist section after server data loads
+        const shortlistCards = document.getElementById('shortlist-cards');
+        const shortlistEmpty = document.getElementById('shortlist-empty');
+        const shortlistCount = document.getElementById('shortlist-count');
+        if (shortlistCards) {
+          Object.entries(data.trackings).forEach(([id, status]) => {
+            const card = document.getElementById('card-' + id);
+            if (!card) return;
+            const btn = card.querySelector('.shortlist-btn');
+            if (status === 'shortlisted') {
+              if (btn) { btn.classList.add('shortlist-active'); btn.title = 'Remove from shortlist'; }
+              if (!card.closest('#sec-shortlisted')) {
+                if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+                shortlistCards.prepend(card);
+              }
+            } else {
+              if (btn) { btn.classList.remove('shortlist-active'); btn.title = 'Add to shortlist'; }
+            }
+          });
+          const n = shortlistCards.querySelectorAll('.property-card').length;
+          if (shortlistEmpty) shortlistEmpty.style.display = n > 0 ? 'none' : '';
+          if (shortlistCount) shortlistCount.textContent = `(${n})`;
+        }
+        updateNavCounts();
       }
     }).catch(()=>{});
   }
@@ -1734,10 +1902,8 @@ function _weekendDates() {
   const daysToSat = day === 6 ? 7 : (6 - day); // if already Sat, get next Sat
   const sat = new Date(now); sat.setDate(now.getDate() + daysToSat);
   const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
-  const sat2 = new Date(sat); sat2.setDate(sat.getDate() + 7);
-  const sun2 = new Date(sat2); sun2.setDate(sat2.getDate() + 1);
   const fmt = d => d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-  return { sat: fmt(sat), sun: fmt(sun), sat2: fmt(sat2), sun2: fmt(sun2) };
+  return { sat: fmt(sat), sun: fmt(sun) };
 }
 
 function sendEnquiry(dbId, portalId, address, agent, url, price) {
@@ -1753,7 +1919,7 @@ function sendEnquiry(dbId, portalId, address, agent, url, price) {
   if (userPhone)    localStorage.setItem('cfg-user-phone', userPhone);
   if (userPostcode) localStorage.setItem('cfg-user-postcode', userPostcode);
 
-  const { sat, sun, sat2, sun2 } = _weekendDates();
+  const { sat, sun } = _weekendDates();
 
   const message = `Dear ${agent},
 
@@ -1761,11 +1927,11 @@ I am writing to enquire about the property listed at ${address} (${priceFormatte
 
 ${url}
 
-I am a proceedable buyer — I have a mortgage agreement in principle, a deposit ready, and my current property is already under offer, so I can move quickly.
+I am a first-time buyer with a mortgage agreement in principle and a deposit ready. I would love to arrange a viewing this weekend — I am available on ${sat} or ${sun} and would be grateful if you could confirm a convenient time.
 
-I would love to arrange a viewing and am available this weekend (${sat} or ${sun}) or next week (${sat2} or ${sun2}). Please let me know what time works best.
-
-Could you also confirm whether there has been any interest or other offers on the property?
+Could you please also let me know:
+1. Whether there has been any interest or offers on the property
+2. Any additional information about the property not covered in the listing
 
 I look forward to hearing from you.
 
@@ -1779,17 +1945,17 @@ Kind regards${userName ? '\n' + userName : ''}${userPhone ? '\nTel: ' + userPhon
       .then(d => showToast(d.message || 'Form opened — solve the CAPTCHA and click Send!'))
       .catch(() => _fallbackEnquiry(portalId, message));
     // Auto-set status to Contacted
-    saveTracking(dbId, 'enquired');
+    saveTracking(dbId, 'contacted');
     const sel = document.getElementById('tracking-' + dbId);
-    if (sel) sel.value = 'enquired';
+    if (sel) sel.value = 'contacted';
     return;
   }
   _fallbackEnquiry(portalId, message);
   // Auto-set status to Contacted
   if (dbId) {
-    saveTracking(dbId, 'enquired');
+    saveTracking(dbId, 'contacted');
     const sel = document.getElementById('tracking-' + dbId);
-    if (sel) sel.value = 'enquired';
+    if (sel) sel.value = 'contacted';
   }
 }
 
@@ -1832,7 +1998,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbo
 // ------------------------------------------------------------------
 const EPC_ORDER = ['A','B','C','D','E','F','G'];
 const CT_ORDER  = ['A','B','C','D','E','F','G','H'];
-function updateNavCounts() {  var secs = [    ["sec-qualifying","nav-qualifying-count","section-qualifying-count"],    ["sec-opportunities","nav-opportunities-count","section-opportunities-count"],    ["sec-near-misses","nav-near-misses-count","section-near-misses-count"]  ];  secs.forEach(function(s) {    var sec = document.getElementById(s[0]);    if (!sec) return;    var n = 0;    sec.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") n++; });    var nav = document.getElementById(s[1]);    if (nav) nav.textContent = n;    var hdr = document.getElementById(s[2]);    if (hdr) hdr.textContent = "(" + n + ")";  });  var fc = document.getElementById("fav-cards");  if (fc) {    var fv = 0;    fc.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") fv++; });    var fn = document.getElementById("nav-fav-count");    if (fn) fn.textContent = fv;  }}
+function updateNavCounts() {  var secs = [    ["sec-qualifying","nav-qualifying-count","section-qualifying-count"],    ["sec-opportunities","nav-opportunities-count","section-opportunities-count"],    ["sec-near-misses","nav-near-misses-count","section-near-misses-count"]  ];  secs.forEach(function(s) {    var sec = document.getElementById(s[0]);    if (!sec) return;    var n = 0;    sec.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") n++; });    var nav = document.getElementById(s[1]);    if (nav) nav.textContent = n;    var hdr = document.getElementById(s[2]);    if (hdr) hdr.textContent = "(" + n + ")";  });  var fc = document.getElementById("fav-cards");  if (fc) {    var fv = 0;    fc.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") fv++; });    var fn = document.getElementById("nav-fav-count");    if (fn) fn.textContent = fv;  }  var sc = document.getElementById("shortlist-cards");  if (sc) {    var sv = 0;    sc.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") sv++; });    var sn = document.getElementById("nav-shortlist-count");    if (sn) sn.textContent = sv;    var sh = document.getElementById("shortlist-count");    if (sh) sh.textContent = "(" + sv + ")";  }}
 
 function applyFilters() {
   const search     = (document.getElementById('filter-search').value || '').toLowerCase();
@@ -1843,6 +2009,7 @@ function applyFilters() {
   const filterArea = document.getElementById('filter-area').value;
   const minScore   = parseFloat(document.getElementById('filter-score').value) || 0;
   const maxMo      = parseFloat(document.getElementById('filter-monthly').value) || Infinity;
+  const filterStatus = document.getElementById('filter-status').value;
 
   let visible = 0;
   document.querySelectorAll('.property-card').forEach(card => {
@@ -1857,6 +2024,7 @@ function applyFilters() {
     const area    = card.dataset.area || '';
     const score   = parseFloat(card.dataset.score) || 0;
     const monthly = parseFloat(card.dataset.monthly) || 0;
+    const tracking = card.dataset.tracking || 'new';
 
     let show = true;
     if (search     && !addr.includes(search))       show = false;
@@ -1867,6 +2035,7 @@ function applyFilters() {
     if (filterArea && area !== filterArea)           show = false;
     if (minScore   && score < minScore)              show = false;
     if (maxMo < Infinity && monthly > maxMo)         show = false;
+    if (filterStatus && tracking !== filterStatus)   show = false;
 
     card.style.display = show ? '' : 'none';
     if (show) visible++;
@@ -1880,7 +2049,7 @@ function applyFilters() {
 
 function clearFilters() {
   ['filter-search','filter-score','filter-monthly'].forEach(id => document.getElementById(id).value = '');
-  ['filter-tenure','filter-beds','filter-epc','filter-ct','filter-area','filter-sort'].forEach(id => document.getElementById(id).value = id === 'filter-sort' ? 'score-desc' : '');
+  ['filter-tenure','filter-beds','filter-epc','filter-ct','filter-area','filter-sort','filter-status'].forEach(id => document.getElementById(id).value = id === 'filter-sort' ? 'score-desc' : '');
   document.querySelectorAll('.property-card').forEach(c => {
     // Respect excluded state
     if (!c.querySelector('.action-btn.excl-active')) c.style.display = '';
@@ -1904,7 +2073,7 @@ function sortCards(val) {
         case 'ppsf-asc':      return (parseInt(a.dataset.ppsf)||99999) - (parseInt(b.dataset.ppsf)||99999);
         case 'ppsf-desc':     return (parseInt(b.dataset.ppsf)||0) - (parseInt(a.dataset.ppsf)||0);
         case 'size-desc':     return (parseInt(b.dataset.sizeSqft)||0) - (parseInt(a.dataset.sizeSqft)||0);
-        case 'newest':        return (parseInt(a.dataset.dom)||0) - (parseInt(b.dataset.dom)||0);
+        case 'newest':        return (parseInt(b.dataset.dom)||0) < (parseInt(a.dataset.dom)||0) ? 1 : -1;
         default: return 0;
       }
     });

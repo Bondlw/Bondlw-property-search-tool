@@ -249,7 +249,7 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
             self._json_response(200, {"notes": {str(k): v for k, v in notes.items()}})
 
     def _handle_set_tracking(self, prop_id: int, status: str):
-        valid_statuses = {"new", "reviewing", "contacted", "viewing_booked", "viewed", "offer_made", "rejected", "archived"}
+        valid_statuses = {"new", "shortlisted", "reviewing", "contacted", "viewing_booked", "viewed", "offer_made", "rejected", "archived"}
         if status not in valid_statuses:
             self._json_response(400, {"error": f"Invalid status. Must be one of: {', '.join(sorted(valid_statuses))}"})
             return

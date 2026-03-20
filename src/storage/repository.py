@@ -178,13 +178,15 @@ class PropertyRepository:
         self.db.conn.commit()
 
     def get_properties_needing_details(self) -> list[dict]:
-        """Get active properties that haven't been detail-scraped yet, or are missing images."""
+        """Get active properties that haven't been detail-scraped yet, or are missing key data."""
         rows = self.db.conn.execute(
             """SELECT id, url, portal_id FROM properties
                WHERE is_active = 1
                AND (
                    description IS NULL OR description = ''
                    OR images IS NULL OR images = '' OR images = '[]'
+                   OR service_charge_pa IS NULL
+                   OR ground_rent_pa IS NULL
                )
                ORDER BY first_seen_date DESC"""
         ).fetchall()

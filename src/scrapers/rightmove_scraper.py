@@ -292,12 +292,12 @@ class RightmoveScraper(BaseScraper):
             lease_years = None
             if isinstance(tenure_info, dict):
                 tenure_type = (tenure_info.get("tenureType") or "").lower()
-                if "freehold" in tenure_type:
-                    tenure = "freehold"
+                if "share" in tenure_type:
+                    tenure = "share_of_freehold"
                 elif "leasehold" in tenure_type:
                     tenure = "leasehold"
-                elif "share" in tenure_type:
-                    tenure = "share_of_freehold"
+                elif "freehold" in tenure_type:
+                    tenure = "freehold"
                 lease_years = (
                     tenure_info.get("yearsRemainingOnLease")
                     or tenure_info.get("yearsRemaining")

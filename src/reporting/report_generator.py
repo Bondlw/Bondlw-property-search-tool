@@ -76,7 +76,8 @@ class ReportGenerator:
 
     def generate(self, properties: list[dict], output_path: str, enrichment_map: dict | None = None,
                  favourite_ids: set[int] | None = None, excluded_ids: set[int] | None = None,
-                 price_history_map: dict | None = None) -> str:
+                 price_history_map: dict | None = None,
+                 tracking_statuses: dict[int, str] | None = None) -> str:
         """Generate a full daily report. Returns the output file path.
 
         enrichment_map: optional {property_id: enrichment_dict} to feed into gates.
@@ -87,6 +88,7 @@ class ReportGenerator:
         calc = FinancialCalculator(self.config)
         fav_ids = favourite_ids or set()
         excl_ids = excluded_ids or set()
+        track_map = tracking_statuses or {}
 
         qualifying = []
         needs_verification = []
@@ -103,6 +105,7 @@ class ReportGenerator:
             prop_id = prop["id"]
             prop["_is_favourite"] = prop_id in fav_ids
             prop["_is_excluded"] = prop_id in excl_ids
+            prop["_tracking_status"] = track_map.get(prop_id, "new")
             prop["_is_new"] = prop.get("first_seen_date") == today
             prop["_is_reduced"] = bool(prop.get("price_reduced"))
             prop["_price_history"] = (price_history_map or {}).get(prop_id, [])
@@ -367,6 +370,10 @@ class ReportGenerator:
         # Stretch impact reference table
         stretch_impact = calc.calculate_stretch_impact()
 
+        # Collect shortlisted properties across all sections
+        shortlisted = [p for p in in_radius_props if p.get("_tracking_status") == "shortlisted" and not p.get("_is_excluded")]
+        shortlisted.sort(key=lambda p: -(p.get("_scores") or {}).get("total", 0))
+
         template = self.env.get_template("daily_report.html")
         html = template.render(
             report_date=today,
@@ -382,6 +389,7 @@ class ReportGenerator:
             near_misses=near_misses,
             opportunities=opportunities,
             favourites=favourites,
+            shortlisted=shortlisted,
             area_stats=area_stats,
             config=self.config,
             is_first_import=is_first_import,
