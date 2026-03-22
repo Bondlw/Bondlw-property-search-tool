@@ -6,6 +6,7 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/*.db.bak*
+data/backups/
 data/cache/
 output/reports/
 output/logs/
@@ -15,3 +16,6 @@ dist/
 build/
 .venv/
 config/secrets.yaml
+.coverage
+.playwright-profile/
+.playwright-state.json

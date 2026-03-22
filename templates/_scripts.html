@@ -1,0 +1,1781 @@
+<script>
+// Carousel
+function carouselScroll(id, dir) {
+  const track = document.querySelector('#' + id + ' .carousel-track');
+  if (!track) return;
+  const w = track.offsetWidth;
+  track.scrollBy({ left: dir * w, behavior: 'smooth' });
+  // Update counter
+  setTimeout(() => {
+    const counter = document.querySelector('#' + id + ' .carousel-counter');
+    if (counter) {
+      const idx = Math.round(track.scrollLeft / w) + 1;
+      const total = track.children.length;
+      counter.textContent = idx + ' / ' + total;
+    }
+  }, 350);
+}
+
+// ------------------------------------------------------------------
+// State: persisted in localStorage. Works with file:// (no server).
+// Also syncs to DB when served via python -m src serve.
+// ------------------------------------------------------------------
+const LS_KEY = 'property-tool-state';
+
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {favs:[], excl:[]}; }
+  catch(e) { return {favs:[], excl:[]}; }
+}
+function saveState(s) { localStorage.setItem(LS_KEY, JSON.stringify(s)); }
+
+function dismissNew(id) {
+  const badge = document.getElementById('new-badge-' + id);
+  if (badge) badge.classList.add('dismissed');
+  const s = loadState();
+  if (!s.new_dismissed) s.new_dismissed = [];
+  if (!s.new_dismissed.includes(id)) s.new_dismissed.push(id);
+  saveState(s);
+}
+
+function applyStoredState() {
+  const s = loadState();
+  const favCards = document.getElementById('fav-cards');
+  const favEmpty  = document.getElementById('fav-empty');
+  const favCount  = document.getElementById('fav-count');
+
+  // Restore dismissed NEW badges
+  (s.new_dismissed || []).forEach(id => {
+    const badge = document.getElementById('new-badge-' + id);
+    if (badge) badge.classList.add('dismissed');
+  });
+
+  s.favs.forEach(id => {
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    const btn = card.querySelectorAll('.action-btn')[0];
+    if (btn) { btn.classList.add('fav-active'); btn.innerHTML = '&#9733;'; btn.title = 'Remove from favourites'; }
+    card.classList.add('favourite');
+    // Move to favourites section if not already there
+    if (favCards && !card.closest('#sec-favourites')) {
+      if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+      favCards.prepend(card);
+    }
+  });
+
+  // Sync empty-state and count
+  if (favCards) {
+    const n = favCards.querySelectorAll('.property-card').length;
+    if (favEmpty) favEmpty.style.display = n > 0 ? 'none' : '';
+    if (favCount) favCount.textContent = `(${n})`;
+  }
+
+  s.excl.forEach(id => {
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    const btn = card.querySelectorAll('.action-btn')[2];
+    if (btn) btn.classList.add('excl-active');
+    card.style.display = 'none';
+  });
+
+  // Restore shortlisted state from localStorage
+  const shortlistCards = document.getElementById('shortlist-cards');
+  const shortlistEmpty = document.getElementById('shortlist-empty');
+  const shortlistCount = document.getElementById('shortlist-count');
+  const trackings = s.trackings || {};
+  Object.entries(trackings).forEach(([id, status]) => {
+    if (status !== 'shortlisted') return;
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    const btn = card.querySelector('.shortlist-btn');
+    if (btn) { btn.classList.add('shortlist-active'); btn.title = 'Remove from shortlist'; }
+    card.dataset.tracking = 'shortlisted';
+    if (shortlistCards && !card.closest('#sec-shortlisted')) {
+      if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+      shortlistCards.prepend(card);
+    }
+  });
+  if (shortlistCards) {
+    const n = shortlistCards.querySelectorAll('.property-card').length;
+    if (shortlistEmpty) shortlistEmpty.style.display = n > 0 ? 'none' : '';
+    if (shortlistCount) shortlistCount.textContent = `(${n})`;
+  }
+}
+document.addEventListener('DOMContentLoaded', applyStoredState);
+
+// Reset filters on fresh page load (prevent browser autocomplete restoring old filter values)
+document.addEventListener('DOMContentLoaded', function() {
+  clearFilters();
+  updateExcludeIndicators();
+  // Watch for late browser autocomplete that changes input values after DOMContentLoaded
+  const filterBar = document.getElementById('filter-bar');
+  if (filterBar) {
+    const observer = new MutationObserver(function() {
+      clearFilters();
+      updateExcludeIndicators();
+      updateNavCounts();
+      observer.disconnect();
+    });
+    filterBar.querySelectorAll('input, select').forEach(function(el) {
+      observer.observe(el, { attributes: true, attributeFilter: ['value'] });
+    });
+    // Fallback: disconnect after 2s regardless (observer may never fire)
+    setTimeout(function() { observer.disconnect(); }, 2000);
+  }
+});
+
+function updateExcludeIndicators() {
+  // Show per-section "X hidden" banners for excluded cards
+  ['qualifying', 'opportunities', 'near-misses'].forEach(sec => {
+    const section = document.getElementById('sec-' + sec);
+    if (!section) return;
+    const hidden = section.querySelectorAll('.property-card .action-btn.excl-active').length;
+    const indicator = document.getElementById('excl-indicator-' + sec.replace('-', ''));
+    if (!indicator) return;
+    if (hidden > 0) {
+      indicator.style.display = '';
+      const countEl = document.getElementById('excl-count-' + sec.replace('-', ''));
+      if (countEl) countEl.textContent = hidden;
+    } else {
+      indicator.style.display = 'none';
+    }
+  });
+}
+
+function showExcludedInSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+  const s = loadState();
+  section.querySelectorAll('.property-card').forEach(card => {
+    const btn = card.querySelectorAll('.action-btn')[1];
+    if (btn && btn.classList.contains('excl-active')) {
+      btn.classList.remove('excl-active');
+      card.style.display = '';
+      const id = parseInt(card.dataset.id);
+      const idx = s.excl.indexOf(id);
+      if (idx !== -1) s.excl.splice(idx, 1);
+      // Sync to server
+      if (location.protocol !== 'file:') {
+        fetch('/api/unexclude/' + id, {method:'POST'}).catch(()=>{});
+      }
+    }
+  });
+  saveState(s);
+  updateExcludeIndicators();
+  showToast('All properties in section restored');
+}
+
+// Toast
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function reloadReport() {
+  if (location.protocol !== 'file:') {
+    showToast('Regenerating report\u2026');
+    fetch('/api/regenerate', {method: 'POST'})
+      .then(r => r.json())
+      .then(d => { showToast('Done \u2014 reloading\u2026'); setTimeout(() => location.reload(), 800); })
+      .catch(() => { showToast('Reloading\u2026'); setTimeout(() => location.reload(), 400); });
+  } else {
+    location.reload();
+  }
+}
+
+function toggleFavourite(evt, id) {
+  const card = evt.target.closest('.property-card');
+  const btn  = card.querySelectorAll('.action-btn')[0];
+  const s    = loadState();
+  const idx  = s.favs.indexOf(id);
+  const favCards = document.getElementById('fav-cards');
+  const favEmpty  = document.getElementById('fav-empty');
+  const favCount  = document.getElementById('fav-count');
+
+  if (idx === -1) {
+    s.favs.push(id);
+    btn.classList.add('fav-active'); btn.innerHTML = '&#9733;'; btn.title = 'Remove from favourites';
+    card.classList.add('favourite');
+    if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+    if (favCards && !card.closest('#sec-favourites')) favCards.prepend(card);
+    if (favEmpty) favEmpty.style.display = 'none';
+    if (favCount) favCount.textContent = `(${favCards?.querySelectorAll('.property-card').length || 0})`;
+    showToast('\u2605 Added to favourites');
+  } else {
+    s.favs.splice(idx, 1);
+    btn.classList.remove('fav-active'); btn.innerHTML = '&#9734;'; btn.title = 'Add to favourites';
+    card.classList.remove('favourite');
+    const srcId = card.dataset.srcSection;
+    if (srcId && document.getElementById(srcId)) {
+      const srcCards = document.getElementById(srcId).querySelector('.cards');
+      if (srcCards) srcCards.appendChild(card);
+    }
+    const n = favCards?.querySelectorAll('.property-card').length || 0;
+    if (favEmpty) favEmpty.style.display = n === 0 ? '' : 'none';
+    if (favCount) favCount.textContent = `(${n})`;
+    showToast('Removed from favourites');
+  }
+  saveState(s);
+  if (location.protocol !== 'file:')
+    fetch('/api/favourite/' + id, {method:'POST'}).catch(()=>{});
+}
+
+function toggleExclude(id) {
+  const card = document.getElementById('card-' + id);
+  const btn = card.querySelectorAll('.action-btn')[2];
+  const s = loadState();
+  const idx = s.excl.indexOf(id);
+  if (idx === -1) {
+    s.excl.push(id);
+    btn.classList.add('excl-active');
+    card.style.display = 'none';
+    showToast('Hidden — excluded from future reports');
+  } else {
+    s.excl.splice(idx, 1);
+    btn.classList.remove('excl-active');
+    card.style.display = '';
+    showToast('Restored to report');
+  }
+  saveState(s);
+  if (location.protocol !== 'file:') {
+    const ep = idx === -1 ? '/api/exclude/' : '/api/unexclude/';
+    fetch(ep + id, {method:'POST'}).catch(()=>{});
+  }
+}
+
+function toggleShortlist(evt, id) {
+  const card = evt.target.closest('.property-card');
+  const btn  = card.querySelector('.shortlist-btn');
+  const isShortlisted = btn.classList.contains('shortlist-active');
+  const newStatus = isShortlisted ? 'new' : 'shortlisted';
+  const shortlistCards = document.getElementById('shortlist-cards');
+  const shortlistEmpty = document.getElementById('shortlist-empty');
+  const shortlistCount = document.getElementById('shortlist-count');
+
+  if (!isShortlisted) {
+    btn.classList.add('shortlist-active');
+    btn.title = 'Remove from shortlist';
+    card.dataset.tracking = 'shortlisted';
+    if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+    if (shortlistCards && !card.closest('#sec-shortlisted')) shortlistCards.prepend(card);
+    if (shortlistEmpty) shortlistEmpty.style.display = 'none';
+    showToast('✓ Added to shortlist');
+  } else {
+    btn.classList.remove('shortlist-active');
+    btn.title = 'Add to shortlist';
+    card.dataset.tracking = 'new';
+    const srcId = card.dataset.srcSection;
+    if (srcId && document.getElementById(srcId)) {
+      const srcCards = document.getElementById(srcId).querySelector('.cards');
+      if (srcCards) srcCards.appendChild(card);
+    }
+    showToast('Removed from shortlist');
+  }
+
+  const n = shortlistCards?.querySelectorAll('.property-card').length || 0;
+  if (shortlistEmpty) shortlistEmpty.style.display = n === 0 ? '' : 'none';
+  if (shortlistCount) shortlistCount.textContent = `(${n})`;
+
+  // Persist via localStorage
+  const s = loadState();
+  s.trackings = s.trackings || {};
+  s.trackings[id] = newStatus;
+  saveState(s);
+
+  // Persist via server
+  if (location.protocol !== 'file:') {
+    fetch('/api/tracking/' + id, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({status: newStatus})
+    }).catch(() => {});
+  }
+  updateNavCounts();
+}
+
+// Notes + Tracking
+function saveNote(id, text) {
+  // localStorage fallback
+  const s = loadState();
+  s.notes = s.notes || {};
+  s.notes[id] = text;
+  saveState(s);
+  // Server sync
+  if (location.protocol !== 'file:') {
+    fetch('/api/note/' + id, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: text})
+    }).catch(()=>{});
+  }
+  const badge = document.getElementById('note-saved-' + id);
+  if (badge) { badge.classList.add('show'); setTimeout(() => badge.classList.remove('show'), 1500); }
+}
+
+function saveTracking(id, status) {
+  const s = loadState();
+  s.trackings = s.trackings || {};
+  s.trackings[id] = status;
+  saveState(s);
+  if (location.protocol !== 'file:') {
+    fetch('/api/tracking/' + id, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({status: status})
+    }).catch(()=>{});
+  }
+
+  // Sync shortlist button and card position
+  const card = document.getElementById('card-' + id);
+  if (card) {
+    const btn = card.querySelector('.shortlist-btn');
+    const shortlistCards = document.getElementById('shortlist-cards');
+    const shortlistEmpty = document.getElementById('shortlist-empty');
+    const shortlistCount = document.getElementById('shortlist-count');
+    card.dataset.tracking = status;
+
+    if (status === 'shortlisted') {
+      if (btn) { btn.classList.add('shortlist-active'); btn.title = 'Remove from shortlist'; }
+      if (shortlistCards && !card.closest('#sec-shortlisted')) {
+        if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+        shortlistCards.prepend(card);
+      }
+    } else {
+      if (btn) { btn.classList.remove('shortlist-active'); btn.title = 'Add to shortlist'; }
+      if (card.closest('#sec-shortlisted')) {
+        const srcId = card.dataset.srcSection;
+        if (srcId && document.getElementById(srcId)) {
+          const srcCards = document.getElementById(srcId).querySelector('.cards');
+          if (srcCards) srcCards.appendChild(card);
+        }
+      }
+    }
+    if (shortlistCards) {
+      const n = shortlistCards.querySelectorAll('.property-card').length;
+      if (shortlistEmpty) shortlistEmpty.style.display = n > 0 ? 'none' : '';
+      if (shortlistCount) shortlistCount.textContent = `(${n})`;
+    }
+  }
+
+  showToast('Status → ' + status.replace(/_/g, ' '));
+  updateNavCounts();
+}
+
+function loadNotesAndTrackings() {
+  const s = loadState();
+  // Restore from localStorage first
+  if (s.notes) {
+    Object.entries(s.notes).forEach(([id, text]) => {
+      const el = document.getElementById('note-' + id);
+      if (el && text) el.value = text;
+    });
+  }
+  if (s.trackings) {
+    Object.entries(s.trackings).forEach(([id, status]) => {
+      const el = document.getElementById('tracking-' + id);
+      if (el && status) el.value = status;
+    });
+  }
+  // Server sync (overrides localStorage if available)
+  if (location.protocol !== 'file:') {
+    fetch('/api/notes').then(r => r.json()).then(data => {
+      if (data.notes) {
+        Object.entries(data.notes).forEach(([id, text]) => {
+          const el = document.getElementById('note-' + id);
+          if (el && text) el.value = text;
+          s.notes = s.notes || {};
+          s.notes[id] = text;
+        });
+        saveState(s);
+      }
+    }).catch(()=>{});
+    fetch('/api/trackings').then(r => r.json()).then(data => {
+      if (data.trackings) {
+        Object.entries(data.trackings).forEach(([id, status]) => {
+          const el = document.getElementById('tracking-' + id);
+          if (el && status) el.value = status;
+          const card = document.getElementById('card-' + id);
+          if (card) card.dataset.tracking = status;
+          s.trackings = s.trackings || {};
+          s.trackings[id] = status;
+        });
+        saveState(s);
+        // Refresh shortlist section after server data loads
+        const shortlistCards = document.getElementById('shortlist-cards');
+        const shortlistEmpty = document.getElementById('shortlist-empty');
+        const shortlistCount = document.getElementById('shortlist-count');
+        if (shortlistCards) {
+          Object.entries(data.trackings).forEach(([id, status]) => {
+            const card = document.getElementById('card-' + id);
+            if (!card) return;
+            const btn = card.querySelector('.shortlist-btn');
+            if (status === 'shortlisted') {
+              if (btn) { btn.classList.add('shortlist-active'); btn.title = 'Remove from shortlist'; }
+              if (!card.closest('#sec-shortlisted')) {
+                if (!card.dataset.srcSection) card.dataset.srcSection = card.closest('details')?.id || '';
+                shortlistCards.prepend(card);
+              }
+            } else {
+              if (btn) { btn.classList.remove('shortlist-active'); btn.title = 'Add to shortlist'; }
+            }
+          });
+          const n = shortlistCards.querySelectorAll('.property-card').length;
+          if (shortlistEmpty) shortlistEmpty.style.display = n > 0 ? 'none' : '';
+          if (shortlistCount) shortlistCount.textContent = `(${n})`;
+        }
+        updateNavCounts();
+      }
+    }).catch(()=>{});
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadNotesAndTrackings);
+
+// Enquiry — open Rightmove contact form + copy message to clipboard
+function _weekendDates() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 6=Sat
+  const daysToSat = day === 6 ? 7 : (6 - day); // if already Sat, get next Sat
+  const sat = new Date(now); sat.setDate(now.getDate() + daysToSat);
+  const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
+  const fmt = d => d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  return { sat: fmt(sat), sun: fmt(sun) };
+}
+
+function sendEnquiry(dbId, portalId, address, agent, url, price) {
+  const priceFormatted = '£' + parseInt(price).toLocaleString();
+  const userName   = document.getElementById('cfg-user-name').value     || localStorage.getItem('cfg-user-name')     || '';
+  const userEmail  = document.getElementById('cfg-user-email').value    || localStorage.getItem('cfg-user-email')    || '';
+  const userPhone  = document.getElementById('cfg-user-phone').value    || localStorage.getItem('cfg-user-phone')    || '';
+  const userPostcode = document.getElementById('cfg-user-postcode').value || localStorage.getItem('cfg-user-postcode') || '';
+
+  // Save contact details for future use
+  if (userName)     localStorage.setItem('cfg-user-name', userName);
+  if (userEmail)    localStorage.setItem('cfg-user-email', userEmail);
+  if (userPhone)    localStorage.setItem('cfg-user-phone', userPhone);
+  if (userPostcode) localStorage.setItem('cfg-user-postcode', userPostcode);
+
+  const { sat, sun } = _weekendDates();
+
+  const message = `Dear ${agent},
+
+I am writing to enquire about the property listed at ${address} (${priceFormatted}).
+
+${url}
+
+I am a first-time buyer with a mortgage agreement in principle and a deposit ready. I would love to arrange a viewing this weekend — I am available on ${sat} or ${sun} and would be grateful if you could confirm a convenient time.
+
+Could you please also let me know:
+1. Whether there has been any interest or offers on the property
+2. Any additional information about the property not covered in the listing
+
+I look forward to hearing from you.
+
+Kind regards${userName ? '\n' + userName : ''}${userPhone ? '\nTel: ' + userPhone : ''}${userEmail ? '\n' + userEmail : ''}`;
+
+  // If running via server, auto-fill the Rightmove form via Playwright
+  if (location.protocol !== 'file:' && dbId) {
+    showToast('Opening Rightmove form and filling your details…');
+    fetch('/api/enquiry/' + dbId, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => showToast(d.message || 'Form opened — solve the CAPTCHA and click Send!'))
+      .catch(() => _fallbackEnquiry(portalId, message));
+    // Auto-set status to Contacted
+    saveTracking(dbId, 'contacted');
+    const sel = document.getElementById('tracking-' + dbId);
+    if (sel) sel.value = 'contacted';
+    return;
+  }
+  _fallbackEnquiry(portalId, message);
+  // Auto-set status to Contacted
+  if (dbId) {
+    saveTracking(dbId, 'contacted');
+    const sel = document.getElementById('tracking-' + dbId);
+    if (sel) sel.value = 'contacted';
+  }
+}
+
+function _fallbackEnquiry(portalId, message) {
+  // Copy message to clipboard so user can paste into Rightmove's form
+  navigator.clipboard.writeText(message).then(() => {}).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = message;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+
+  // Open Rightmove's contact form for this property
+  if (portalId) {
+    window.open('https://www.rightmove.co.uk/property-for-sale/contactBranch.html?propertyId=' + portalId, '_blank');
+    showToast('Rightmove contact form opened — message copied to clipboard, paste it in!');
+  } else {
+    showToast('Message copied to clipboard');
+  }
+}
+
+// ------------------------------------------------------------------
+// Lightbox
+// ------------------------------------------------------------------
+function openLightbox(url) {
+  const lb = document.getElementById('lightbox');
+  document.getElementById('lightbox-img').src = url;
+  lb.classList.add('open');
+  event.stopPropagation();
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+// ------------------------------------------------------------------
+// Filters
+// ------------------------------------------------------------------
+const EPC_ORDER = ['A','B','C','D','E','F','G'];
+const CT_ORDER  = ['A','B','C','D','E','F','G','H'];
+function updateNavCounts() {  var secs = [    ["sec-qualifying","nav-qualifying-count","section-qualifying-count"],    ["sec-opportunities","nav-opportunities-count","section-opportunities-count"],    ["sec-near-misses","nav-near-misses-count","section-near-misses-count"]  ];  secs.forEach(function(s) {    var sec = document.getElementById(s[0]);    if (!sec) return;    var n = 0;    sec.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") n++; });    var nav = document.getElementById(s[1]);    if (nav) nav.textContent = n;    var hdr = document.getElementById(s[2]);    if (hdr) hdr.textContent = "(" + n + ")";  });  var fc = document.getElementById("fav-cards");  if (fc) {    var fv = 0;    fc.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") fv++; });    var fn = document.getElementById("nav-fav-count");    if (fn) fn.textContent = fv;  }  var sc = document.getElementById("shortlist-cards");  if (sc) {    var sv = 0;    sc.querySelectorAll(".property-card").forEach(function(c) { if (c.style.display !== "none") sv++; });    var sn = document.getElementById("nav-shortlist-count");    if (sn) sn.textContent = sv;    var sh = document.getElementById("shortlist-count");    if (sh) sh.textContent = "(" + sv + ")";  }}
+
+let _newTodayFilterActive = false;
+let _reducedFilterActive = false;
+
+function toggleNewTodayFilter() {
+  _newTodayFilterActive = !_newTodayFilterActive;
+  const btn = document.getElementById('filter-new-today-btn');
+  if (_newTodayFilterActive) {
+    btn.style.background = 'rgba(34,197,94,0.15)';
+    btn.style.borderColor = 'var(--green)';
+  } else {
+    btn.style.background = '';
+    btn.style.borderColor = '';
+  }
+  applyFilters();
+}
+
+function toggleReducedFilter() {
+  _reducedFilterActive = !_reducedFilterActive;
+  const btn = document.getElementById('filter-reduced-btn');
+  if (_reducedFilterActive) {
+    btn.style.background = 'rgba(245,158,11,0.15)';
+    btn.style.borderColor = 'var(--amber)';
+  } else {
+    btn.style.background = '';
+    btn.style.borderColor = '';
+  }
+  applyFilters();
+}
+
+function applyFilters() {
+  const search     = (document.getElementById('filter-search').value || '').toLowerCase();
+  const tenure     = document.getElementById('filter-tenure').value;
+  const minBeds    = parseInt(document.getElementById('filter-beds').value) || 0;
+  const filterArea = document.getElementById('filter-area').value;
+  const minScore   = parseFloat(document.getElementById('filter-score').value) || 0;
+  const maxMo      = parseFloat(document.getElementById('filter-monthly').value) || Infinity;
+  const minPrice   = parseFloat(document.getElementById('filter-price-min').value) || 0;
+  const maxPrice   = parseFloat(document.getElementById('filter-price-max').value) || Infinity;
+
+  let visible = 0;
+  document.querySelectorAll('.property-card').forEach(card => {
+    // Never show excluded cards
+    if (card.querySelector('.action-btn.excl-active')) { card.style.display = 'none'; return; }
+
+    const addr    = card.dataset.address || '';
+    const cTenure = card.dataset.tenure || '';
+    const beds    = parseInt(card.dataset.beds) || 0;
+    const area    = card.dataset.area || '';
+    const score   = parseFloat(card.dataset.score) || 0;
+    const monthly = parseFloat(card.dataset.monthly) || 0;
+    const price   = parseFloat(card.dataset.price) || 0;
+    const isNew   = card.dataset.new === 'true';
+    const isReduced = card.dataset.reduced === 'true';
+
+    let show = true;
+    if (search     && !addr.includes(search))       show = false;
+    if (tenure     && cTenure !== tenure)            show = false;
+    if (minBeds    && beds < minBeds)                show = false;
+    if (filterArea && area !== filterArea)           show = false;
+    if (minScore   && score < minScore)              show = false;
+    if (maxMo < Infinity && monthly > maxMo)         show = false;
+    if (minPrice   && price < minPrice)              show = false;
+    if (maxPrice < Infinity && price > maxPrice)     show = false;
+    if (_newTodayFilterActive && !isNew)             show = false;
+    if (_reducedFilterActive && !isReduced)          show = false;
+
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  const countEl = document.getElementById('filter-count');
+  const total = document.querySelectorAll('.property-card:not(:has(.action-btn.excl-active))').length;
+  countEl.textContent = (visible < total) ? `Showing ${visible} of ${total}` : '';
+  updateNavCounts();
+}
+
+function clearFilters() {
+  ['filter-search','filter-score','filter-monthly','filter-price-min','filter-price-max'].forEach(id => document.getElementById(id).value = '');
+  ['filter-tenure','filter-beds','filter-area','filter-sort'].forEach(id => document.getElementById(id).value = id === 'filter-sort' ? 'score-desc' : '');
+  _newTodayFilterActive = false;
+  _reducedFilterActive = false;
+  const btn = document.getElementById('filter-new-today-btn');
+  if (btn) { btn.style.background = ''; btn.style.borderColor = ''; }
+  const rbtn = document.getElementById('filter-reduced-btn');
+  if (rbtn) { rbtn.style.background = ''; rbtn.style.borderColor = ''; }
+  document.querySelectorAll('.property-card').forEach(c => {
+    // Respect excluded state
+    if (!c.querySelector('.action-btn.excl-active')) c.style.display = '';
+  });
+  document.getElementById('filter-count').textContent = '';
+  updateNavCounts();
+}
+
+function sortCards(val) {
+  document.querySelectorAll('.cards').forEach(container => {
+    const cards = Array.from(container.querySelectorAll('.property-card'));
+    cards.sort((a, b) => {
+      switch (val) {
+        case 'score-desc':    return (parseFloat(b.dataset.score)||0) - (parseFloat(a.dataset.score)||0);
+        case 'price-asc':     return (parseInt(a.dataset.price)||0) - (parseInt(b.dataset.price)||0);
+        case 'price-desc':    return (parseInt(b.dataset.price)||0) - (parseInt(a.dataset.price)||0);
+        case 'monthly-asc':   return (parseFloat(a.dataset.monthly)||0) - (parseFloat(b.dataset.monthly)||0);
+        case 'dom-desc':      return (parseInt(b.dataset.dom)||0) - (parseInt(a.dataset.dom)||0);
+        case 'station-asc':   return (parseInt(a.dataset.stationWalk)||999) - (parseInt(b.dataset.stationWalk)||999);
+        case 'commute-asc':   return (parseInt(a.dataset.commuteLondon)||999) - (parseInt(b.dataset.commuteLondon)||999);
+        case 'ppsf-asc':      return (parseInt(a.dataset.ppsf)||99999) - (parseInt(b.dataset.ppsf)||99999);
+        case 'ppsf-desc':     return (parseInt(b.dataset.ppsf)||0) - (parseInt(a.dataset.ppsf)||0);
+        case 'size-desc':     return (parseInt(b.dataset.sizeSqft)||0) - (parseInt(a.dataset.sizeSqft)||0);
+        case 'newest':        return (parseInt(b.dataset.dom)||0) < (parseInt(a.dataset.dom)||0) ? 1 : -1;
+        default: return 0;
+      }
+    });
+    cards.forEach(c => container.appendChild(c));
+  });
+}
+
+// ------------------------------------------------------------------
+// Settings / criteria panel
+// ------------------------------------------------------------------
+const SETTINGS_KEY = 'property-tool-criteria';
+const DEFAULTS = {
+  deposit:      {{ config.user.deposit }},
+  rate:         {{ config.user.mortgage_rate }},
+  term:         {{ config.user.mortgage_term_years }},
+  monthlyMin:   {{ config.monthly_target.min }},
+  monthlyMax:   {{ config.monthly_target.max }},
+  freeholdMax:  {{ config.budget.freehold.search_max | default(200000) }},
+  leaseholdMax: {{ config.budget.leasehold.search_max | default(200000) }},
+  scMax:        {{ config.hard_gates.service_charge_max_pa | default(1500) }},
+  grMax:        {{ config.hard_gates.ground_rent_max_pa | default(250) }},
+  leaseMin:     {{ config.hard_gates.lease_minimum_years | default(120) }},
+  stationWalk:  {{ config.hard_gates.station_max_walk_min | default(25) }},
+  superWalk:    {{ config.hard_gates.supermarket_max_walk_min | default(25) }},
+  takeHome:     {{ config.user.monthly_take_home | default(2650) }},
+  bills:        {{ config.estimated_bills.total_monthly | default(198) }},
+  ctMaxBand:    '{{ config.hard_gates.council_tax_max_band | default("C") }}',
+  epcMin:       '{{ config.hard_gates.epc_minimum_rating | default("C") }}',
+  crimeAsb:     {{ config.crime_thresholds.asb_monthly_max | default(15) }},
+  crimeBurglary:{{ config.crime_thresholds.burglary_monthly_max | default(5) }},
+  crimeDrugs:   {{ config.crime_thresholds.drugs_monthly_max | default(5) }},
+  crimeViolent: {{ config.crime_thresholds.violent_monthly_max | default(10) }},
+  floodZone:    {{ config.hard_gates.flood_zone_reject | default(3) }},
+};
+
+function loadSettings() {
+  try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY))); }
+  catch(e) { return Object.assign({}, DEFAULTS); }
+}
+function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+
+function populateSettingsFields() {
+  const s = loadSettings();
+  document.getElementById('cfg-deposit').value      = s.deposit;
+  document.getElementById('cfg-rate').value         = s.rate;
+  document.getElementById('cfg-term').value         = s.term;
+  document.getElementById('cfg-monthly-min').value  = s.monthlyMin;
+  document.getElementById('cfg-monthly-max').value  = s.monthlyMax;
+  document.getElementById('cfg-freehold-max').value = s.freeholdMax;
+  document.getElementById('cfg-leasehold-max').value= s.leaseholdMax;
+  document.getElementById('cfg-sc-max').value       = s.scMax;
+  document.getElementById('cfg-gr-max').value       = s.grMax;
+  document.getElementById('cfg-lease-min').value    = s.leaseMin;
+  document.getElementById('cfg-station-walk').value = s.stationWalk;
+  document.getElementById('cfg-super-walk').value   = s.superWalk;
+  document.getElementById('cfg-take-home').value     = s.takeHome;
+  document.getElementById('cfg-bills').value         = s.bills;
+  document.getElementById('cfg-ct-band').value       = s.ctMaxBand;
+  document.getElementById('cfg-epc-min').value        = s.epcMin;
+  document.getElementById('cfg-crime-asb').value     = s.crimeAsb;
+  document.getElementById('cfg-crime-burglary').value= s.crimeBurglary;
+  document.getElementById('cfg-crime-drugs').value   = s.crimeDrugs;
+  document.getElementById('cfg-crime-violent').value  = s.crimeViolent;
+  document.getElementById('cfg-flood-zone').value    = s.floodZone;
+
+  // Contact details (stored separately in localStorage)
+  document.getElementById('cfg-user-name').value    = localStorage.getItem('cfg-user-name')     || '{{ config.user.name | default("") }}';
+  document.getElementById('cfg-user-email').value   = localStorage.getItem('cfg-user-email')    || '{{ config.user.email | default("") }}';
+  document.getElementById('cfg-user-phone').value   = localStorage.getItem('cfg-user-phone')    || '{{ config.user.phone | default("") }}';
+  document.getElementById('cfg-user-postcode').value = localStorage.getItem('cfg-user-postcode') || '{{ config.user.postcode | default("") }}';
+}
+
+function calcMortgage(price, deposit, ratePercent, termYears) {
+  const principal = price - deposit;
+  if (principal <= 0) return 0;
+  const r = (ratePercent / 100) / 12;
+  const n = termYears * 12;
+  if (r === 0) return principal / n;
+  return principal * (r * Math.pow(1+r, n)) / (Math.pow(1+r, n) - 1);
+}
+
+function applySettings() {
+  const s = {
+    deposit:      parseFloat(document.getElementById('cfg-deposit').value)       || DEFAULTS.deposit,
+    rate:         parseFloat(document.getElementById('cfg-rate').value)          || DEFAULTS.rate,
+    term:         parseFloat(document.getElementById('cfg-term').value)          || DEFAULTS.term,
+    monthlyMin:   parseFloat(document.getElementById('cfg-monthly-min').value)   || DEFAULTS.monthlyMin,
+    monthlyMax:   parseFloat(document.getElementById('cfg-monthly-max').value)   || DEFAULTS.monthlyMax,
+    freeholdMax:  parseFloat(document.getElementById('cfg-freehold-max').value)  || DEFAULTS.freeholdMax,
+    leaseholdMax: parseFloat(document.getElementById('cfg-leasehold-max').value) || DEFAULTS.leaseholdMax,
+    scMax:        parseFloat(document.getElementById('cfg-sc-max').value)        || DEFAULTS.scMax,
+    grMax:        parseFloat(document.getElementById('cfg-gr-max').value)        || DEFAULTS.grMax,
+    leaseMin:     parseFloat(document.getElementById('cfg-lease-min').value)     || DEFAULTS.leaseMin,
+    stationWalk:  parseFloat(document.getElementById('cfg-station-walk').value)  || DEFAULTS.stationWalk,
+    superWalk:    parseFloat(document.getElementById('cfg-super-walk').value)    || DEFAULTS.superWalk,
+    takeHome:     parseFloat(document.getElementById('cfg-take-home').value)     || DEFAULTS.takeHome,
+    bills:        parseFloat(document.getElementById('cfg-bills').value)         || DEFAULTS.bills,
+    ctMaxBand:    document.getElementById('cfg-ct-band').value                   || DEFAULTS.ctMaxBand,
+    epcMin:       document.getElementById('cfg-epc-min').value                    || DEFAULTS.epcMin,
+    crimeAsb:     parseFloat(document.getElementById('cfg-crime-asb').value)     || DEFAULTS.crimeAsb,
+    crimeBurglary:parseFloat(document.getElementById('cfg-crime-burglary').value)|| DEFAULTS.crimeBurglary,
+    crimeDrugs:   parseFloat(document.getElementById('cfg-crime-drugs').value)   || DEFAULTS.crimeDrugs,
+    crimeViolent: parseFloat(document.getElementById('cfg-crime-violent').value) || DEFAULTS.crimeViolent,
+    floodZone:    parseFloat(document.getElementById('cfg-flood-zone').value)    || DEFAULTS.floodZone,
+  };
+
+  const livingCosts = {{ config.living_costs.total_monthly | default(425) }};
+  const savingsTarget = {{ config.living_costs.savings_target_monthly | default(300) }};
+  saveSettings(s);
+
+  // Recalculate cost bars and wage badges for all cards
+  document.querySelectorAll('.property-card').forEach(card => {
+    const price = parseInt(card.dataset.price) || 0;
+    if (!price) return;
+    const scAnnual = parseFloat(card.dataset.sc) || 0;
+    const grAnnual = parseFloat(card.dataset.gr) || 0;
+    const ctMonthly = parseFloat(card.dataset.ctMonthly) || 0;
+    const mtg = calcMortgage(price, s.deposit, s.rate, s.term);
+    const housing = mtg + scAnnual/12 + grAnnual/12 + ctMonthly;
+    const allIn = housing + s.bills;
+    const trueAllIn = allIn + livingCosts;
+    const housingPct = (housing / s.takeHome * 100).toFixed(1);
+    const allInPct = (allIn / s.takeHome * 100).toFixed(1);
+    const trueRemaining = s.takeHome - trueAllIn;
+    const afterSavings = trueRemaining - savingsTarget;
+
+    // Update wage badges
+    const badgesEl = card.querySelector('.wage-badges');
+    if (badgesEl) {
+      const housingBadge = badgesEl.querySelectorAll('.wage-badge')[0];
+      const allInBadge = badgesEl.querySelectorAll('.wage-badge')[1];
+      const remainingBadge = badgesEl.querySelector('.wage-remaining');
+      if (housingBadge) {
+        housingBadge.textContent = 'Housing ' + housingPct + '%';
+        housingBadge.className = 'wage-badge ' + (housingPct <= 30 ? 'green' : housingPct <= 35 ? 'amber' : 'red');
+      }
+      if (allInBadge) {
+        allInBadge.textContent = 'All-in ' + allInPct + '%';
+        allInBadge.className = 'wage-badge ' + (allInPct <= 40 ? 'green' : allInPct <= 50 ? 'amber' : 'red');
+      }
+      if (remainingBadge) {
+        remainingBadge.textContent = '£' + Math.round(afterSavings) + '/mo left';
+        remainingBadge.className = 'wage-remaining ' + (afterSavings >= 500 ? 'good' : afterSavings >= 200 ? 'tight' : 'negative');
+      }
+    }
+
+    // Update affordability warning
+    const warnEl = card.querySelector('.affordability-warning');
+    if (warnEl) {
+      if (housingPct > 35) {
+        warnEl.textContent = '⚠ Housing exceeds 35% of take-home — above recommended threshold';
+        warnEl.style.display = '';
+      } else if (allInPct > 50) {
+        warnEl.textContent = '⚠ All-in costs exceed 50% of take-home — 50/30/20 rule breached';
+        warnEl.style.display = '';
+      } else {
+        warnEl.style.display = 'none';
+      }
+    }
+
+    const totalEl = card.querySelector('.cost-bar .total');
+    if (totalEl) totalEl.textContent = '£' + Math.round(allIn) + '/mo';
+
+    const pctEl = card.querySelector('.cost-bar .pct');
+    if (pctEl) pctEl.textContent = allInPct + '%';
+
+    // Update inline breakdown
+    const inlineEl = card.querySelector('.cost-breakdown-inline');
+    if (inlineEl) {
+      let parts = ['mtg £' + Math.round(mtg)];
+      if (scAnnual > 0) parts.push('SC £' + Math.round(scAnnual / 12));
+      if (grAnnual > 0) parts.push('GR £' + Math.round(grAnnual / 12));
+      if (ctMonthly > 0) parts.push('CT £' + Math.round(ctMonthly));
+      parts.push('bills £' + Math.round(s.bills));
+      inlineEl.textContent = parts.join(' · ');
+    }
+
+    const cb = card.querySelector('.cost-bar');
+    if (cb) {
+      cb.classList.remove('green','amber','red');
+      if (allIn <= s.monthlyMin + s.bills) cb.classList.add('green');
+      else if (allIn <= s.monthlyMax + s.bills) cb.classList.add('amber');
+      else cb.classList.add('red');
+    }
+
+    // Update data-monthly for filter (all-in, not housing)
+    card.dataset.monthly = Math.round(allIn);
+  });
+
+  showToast('Criteria updated — cost bars recalculated');
+  applyFilters();
+}
+
+function resetSettings() {
+  localStorage.removeItem(SETTINGS_KEY);
+  populateSettingsFields();
+  showToast('Reset to original criteria');
+}
+
+function runStressTest() {
+  const s = loadSettings();
+  const rates = [s.rate, s.rate + 1, s.rate + 2, s.rate + 3];
+  const results = document.getElementById('stress-test-results');
+  let html = '<strong>Mortgage Stress Test</strong><br>';
+  html += '<table style="width:100%;font-size:0.72rem;margin-top:4px;border-collapse:collapse;">';
+  html += '<tr><th style="text-align:left;padding:3px;">Rate</th><th>Avg Qualifying</th><th>Most Expensive</th><th>Cheapest</th></tr>';
+
+  const cards = Array.from(document.querySelectorAll('.property-card')).filter(c => c.style.display !== 'none');
+  const prices = cards.map(c => parseInt(c.dataset.price) || 0).filter(p => p > 0);
+  if (!prices.length) { results.innerHTML = 'No visible properties to test.'; results.style.display = 'block'; return; }
+
+  const avgPrice = prices.reduce((a,b) => a+b, 0) / prices.length;
+  const maxPrice = Math.max(...prices);
+  const minPrice = Math.min(...prices);
+
+  rates.forEach(rate => {
+    const avgMtg = calcMortgage(avgPrice, s.deposit, rate, s.term);
+    const maxMtg = calcMortgage(maxPrice, s.deposit, rate, s.term);
+    const minMtg = calcMortgage(minPrice, s.deposit, rate, s.term);
+    const avgAllIn = avgMtg + s.bills;
+    const maxAllIn = maxMtg + s.bills;
+    const minAllIn = minMtg + s.bills;
+    const pctClass = (allIn) => allIn / s.takeHome > 0.4 ? 'color:var(--red)' : allIn / s.takeHome > 0.33 ? 'color:var(--amber)' : 'color:var(--green)';
+    html += '<tr><td style="padding:3px;">' + rate.toFixed(1) + '%' + (rate === s.rate ? ' (current)' : '') + '</td>';
+    html += '<td style="padding:3px;' + pctClass(avgAllIn) + '">\u00a3' + Math.round(avgAllIn) + '/mo (' + (avgAllIn/s.takeHome*100).toFixed(1) + '%)</td>';
+    html += '<td style="padding:3px;' + pctClass(maxAllIn) + '">\u00a3' + Math.round(maxAllIn) + '/mo (' + (maxAllIn/s.takeHome*100).toFixed(1) + '%)</td>';
+    html += '<td style="padding:3px;' + pctClass(minAllIn) + '">\u00a3' + Math.round(minAllIn) + '/mo (' + (minAllIn/s.takeHome*100).toFixed(1) + '%)</td></tr>';
+  });
+  html += '</table>';
+  results.innerHTML = html;
+  results.style.display = 'block';
+}
+
+document.addEventListener('DOMContentLoaded', populateSettingsFields);
+
+// Auto-save contact details on change
+['cfg-user-name', 'cfg-user-email', 'cfg-user-phone', 'cfg-user-postcode'].forEach(function(id) {
+  document.getElementById(id).addEventListener('change', function() {
+    localStorage.setItem(id, this.value);
+  });
+});
+
+// Back-to-top button visibility
+window.addEventListener('scroll', function() {
+  const btn = document.getElementById('back-to-top');
+  btn.style.opacity = window.scrollY > 400 ? '1' : '0';
+  btn.style.pointerEvents = window.scrollY > 400 ? 'auto' : 'none';
+});
+
+// Fix lazy images inside <details> — browsers don't load them when the section is collapsed
+document.querySelectorAll('details').forEach(det => {
+  det.addEventListener('toggle', () => {
+    if (det.open) {
+      det.querySelectorAll('img[loading="lazy"]').forEach(img => { img.loading = 'eager'; });
+    }
+  });
+});
+
+// Fix lazy images inside <details> — browsers don't always load them when the section is collapsed
+document.querySelectorAll('details').forEach(det => {
+  det.addEventListener('toggle', () => {
+    if (det.open) {
+      det.querySelectorAll('img[loading="lazy"]').forEach(img => { img.loading = 'eager'; });
+    }
+  });
+});
+
+// Nav highlight
+(function() {
+  const sections = document.querySelectorAll('details[id]');
+  const navLinks = document.querySelectorAll('.nav a[href^="#"]');
+  if (!sections.length || !navLinks.length) return;
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      const link = document.querySelector('.nav a[href="#' + e.target.id + '"]');
+      if (link) link.classList.toggle('active', e.isIntersecting);
+    });
+  }, { rootMargin: '-80px 0px -60% 0px' });
+  sections.forEach(s => obs.observe(s));
+})();
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+  // Skip if user is typing in an input/textarea
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  switch(e.key) {
+    case '/': e.preventDefault(); document.getElementById('filter-search').focus(); break;
+    case 's': document.getElementById('settings-drawer').open = !document.getElementById('settings-drawer').open; break;
+    case 'c': clearFilters(); break;
+    case 'e': exportCSV(); break;
+    case '?': {
+      const modal = document.getElementById('shortcuts-modal');
+      modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
+      break;
+    }
+    case 'Escape':
+      const scm = document.getElementById('shortcuts-modal');
+      if (scm.style.display === 'flex') { scm.style.display = 'none'; break; }
+      const lb = document.getElementById('lightbox');
+      if (lb.classList.contains('open')) lb.classList.remove('open');
+      else document.activeElement.blur();
+      break;
+  }
+});
+
+// CSV Export
+function csvField(val) {
+  const str = String(val == null ? '' : val);
+  if (str.indexOf(',') !== -1 || str.indexOf('"') !== -1 || str.indexOf('\n') !== -1) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+function exportCSV() {
+  const headers = ['ID','Address','Price','Monthly','Score','Beds','Tenure','CT Band','EPC','Lease Years','Size sqft','£/sqft','Days Listed','Station Walk','Agent','URL'];
+  const rows = [headers.join(',')];
+  document.querySelectorAll('.property-card').forEach(card => {
+    if (card.style.display === 'none') return;
+    const link = card.querySelector('.card-footer a[target="_blank"]');
+    const agentEl = card.querySelector('.card-footer span');
+    const agent = agentEl ? agentEl.textContent.split(' \u00b7 ')[0].trim() : '';
+    rows.push([
+      card.dataset.id,
+      csvField(card.dataset.address),
+      card.dataset.price,
+      card.dataset.monthly,
+      card.dataset.score,
+      card.dataset.beds,
+      card.dataset.tenure,
+      card.dataset.ct,
+      card.dataset.epc,
+      card.dataset.leaseYears || '',
+      card.dataset.sizeSqft || '',
+      card.dataset.ppsf || '',
+      card.dataset.dom,
+      card.dataset.stationWalk,
+      csvField(agent),
+      link ? link.href : ''
+    ].join(','));
+  });
+  const blob = new Blob([rows.join('\n')], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'properties_export.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  const exportCount = rows.length - 1;
+  showToast(`CSV exported — ${exportCount} properties`);
+}
+
+// ------------------------------------------------------------------
+// Property Comparison
+// ------------------------------------------------------------------
+function updateCompareCount() {
+  const checked = document.querySelectorAll('.compare-cb:checked');
+  const btn = document.getElementById('compare-btn');
+  const countEl = document.getElementById('compare-count');
+  countEl.textContent = checked.length;
+  btn.style.display = checked.length > 0 ? '' : 'none';
+}
+
+function showComparison() {
+  const checked = document.querySelectorAll('.compare-cb:checked');
+  if (checked.length < 2) { showToast('Select at least 2 properties to compare'); return; }
+  if (checked.length > 5) { showToast('Select up to 5 properties'); return; }
+
+  const ids = Array.from(checked).map(cb => cb.dataset.id);
+  const cards = ids.map(id => document.getElementById('card-' + id)).filter(Boolean);
+
+  const rows = [
+    { label: 'Address', fn: c => c.dataset.address || '' },
+    { label: 'Price', fn: c => '£' + parseInt(c.dataset.price || 0).toLocaleString() },
+    { label: 'All-in/mo', fn: c => '£' + (c.dataset.monthly || '?') + '/mo' },
+    { label: 'Score', fn: c => c.dataset.score || '-' },
+    { label: 'Beds', fn: c => c.dataset.beds || '-' },
+    { label: 'Tenure', fn: c => (c.dataset.tenure || '-').replace(/_/g, ' ') },
+    { label: 'Lease', fn: c => (parseInt(c.dataset.leaseYears) || 0) > 0 ? c.dataset.leaseYears + 'yr' : '-' },
+    { label: 'Size', fn: c => (parseInt(c.dataset.sizeSqft) || 0) > 0 ? c.dataset.sizeSqft + ' sqft' : '-' },
+    { label: '£/sqft', fn: c => (parseInt(c.dataset.ppsf) || 0) > 0 ? '£' + c.dataset.ppsf : '-' },
+    { label: 'SC (pa)', fn: c => (parseInt(c.dataset.sc) || 0) > 0 ? '£' + c.dataset.sc : '-' },
+    { label: 'GR (pa)', fn: c => (parseInt(c.dataset.gr) || 0) > 0 ? '£' + c.dataset.gr : '-' },
+    { label: 'CT Band', fn: c => c.dataset.ct || '-' },
+    { label: 'EPC', fn: c => c.dataset.epc || '-' },
+    { label: 'Station', fn: c => (parseInt(c.dataset.stationWalk) || 999) < 999 ? c.dataset.stationWalk + ' min' : '-' },
+    { label: 'London', fn: c => (parseInt(c.dataset.commuteLondon) || 999) < 999 ? c.dataset.commuteLondon + ' min' : '-' },
+    { label: 'Days listed', fn: c => c.dataset.dom || '-' },
+  ];
+
+  // Helper to highlight best value per row
+  function bestIdx(vals, lower) {
+    const nums = vals.map(v => parseFloat(v.replace(/[^0-9.-]/g, '')) || null);
+    if (nums.every(n => n === null)) return -1;
+    const valid = nums.filter(n => n !== null);
+    const best = lower ? Math.min(...valid) : Math.max(...valid);
+    return nums.indexOf(best);
+  }
+
+  const lowerBetter = new Set(['All-in/mo', 'Price', 'SC (pa)', 'GR (pa)', '£/sqft', 'Station', 'London', 'Days listed']);
+  const higherBetter = new Set(['Score', 'Beds', 'Lease', 'Size']);
+
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.8rem;">';
+  html += '<thead><tr><th style="padding:6px 8px;text-align:left;border-bottom:2px solid var(--border);color:var(--muted);font-size:0.72rem;"></th>';
+  cards.forEach(() => { html += '<th style="padding:6px 8px;text-align:right;border-bottom:2px solid var(--border);color:var(--text);font-size:0.72rem;">Property</th>'; });
+  html += '</tr></thead><tbody>';
+
+  rows.forEach(row => {
+    const vals = cards.map(c => row.fn(c));
+    let best = -1;
+    if (lowerBetter.has(row.label)) best = bestIdx(vals, true);
+    else if (higherBetter.has(row.label)) best = bestIdx(vals, false);
+
+    html += '<tr>';
+    html += '<td style="padding:4px 8px;color:var(--muted);font-size:0.72rem;white-space:nowrap;border-bottom:1px solid var(--border);">' + row.label + '</td>';
+    vals.forEach((v, i) => {
+      const style = i === best ? 'color:var(--green);font-weight:600;' : '';
+      html += '<td style="padding:4px 8px;text-align:right;border-bottom:1px solid var(--border);' + style + '">' + v + '</td>';
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+
+  document.getElementById('compare-body').innerHTML = html;
+  document.getElementById('compare-modal').style.display = 'flex';
+}
+
+// Table view
+function toggleTableView() {
+  const isTable = document.body.classList.toggle('view-table');
+  document.body.classList.remove('view-map');
+  document.getElementById('map-toggle-btn').textContent = '\ud83d\udccd Map';
+  document.getElementById('view-toggle-btn').textContent = isTable ? '\u25a6 Cards' : '\u2261 Table';
+  if (isTable) buildTableView();
+}
+
+function buildTableView() {
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+  const s = loadState();
+  document.querySelectorAll('.property-card').forEach(card => {
+    if (card.style.display === 'none') return;
+    const id = card.dataset.id;
+    const addr = card.dataset.address || '';
+    const price = parseInt(card.dataset.price) || 0;
+    const monthly = parseInt(card.dataset.monthly) || 0;
+    const score = parseFloat(card.dataset.score) || 0;
+    const beds = card.dataset.beds || '-';
+    const tenure = card.dataset.tenure || '-';
+    const ct = card.dataset.ct || '-';
+    const epc = card.dataset.epc || '-';
+    const leaseYears = parseInt(card.dataset.leaseYears) || 0;
+    const sizeSqft = parseInt(card.dataset.sizeSqft) || 0;
+    const ppsf = parseInt(card.dataset.ppsf) || 0;
+    const stWalk = card.dataset.stationWalk;
+    const dom = card.dataset.dom || '-';
+    const link = card.querySelector('.card-footer a[target="_blank"]');
+    const url = link ? link.href : '#';
+    const trackingStatus = (s.trackings && s.trackings[id]) || 'new';
+
+    const scoreClass = score >= 70 ? 'high' : score >= 50 ? 'medium' : 'low';
+    const leaseDisplay = leaseYears > 0 ? leaseYears + 'yr' : '-';
+    const sizeDisplay = sizeSqft > 0 ? sizeSqft + ' sqft' : '-';
+    const ppsfDisplay = ppsf > 0 ? '\u00a3' + ppsf : '-';
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + addr + '</td><td>\u00a3' + price.toLocaleString() + '</td><td>\u00a3' + monthly + '/mo</td><td class="score-cell ' + scoreClass + '">' + score + '</td><td>' + beds + '</td><td>' + tenure + '</td><td>' + ct + '</td><td>' + epc + '</td><td>' + leaseDisplay + '</td><td>' + sizeDisplay + '</td><td>' + ppsfDisplay + '</td><td>' + (stWalk === '999' ? '-' : stWalk + 'min') + '</td><td>' + dom + 'd</td><td>' + trackingStatus.replace(/_/g, ' ') + '</td><td><a href="' + url + '" target="_blank">View</a></td>';
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', function(e) {
+      if (e.target.tagName === 'A') return;
+      const cardEl = document.getElementById('card-' + id);
+      if (cardEl) { document.body.classList.remove('view-table'); document.body.classList.remove('view-map'); document.getElementById('view-toggle-btn').textContent = '\u2261 Table'; document.getElementById('map-toggle-btn').textContent = '\ud83d\udccd Map'; cardEl.scrollIntoView({behavior:'smooth', block:'center'}); cardEl.style.outline = '2px solid var(--accent)'; setTimeout(function() { cardEl.style.outline = ''; }, 2000); }
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+// Map view
+let mapInstance = null;
+let mapMarkers = [];
+
+function toggleMapView() {
+  const isMap = document.body.classList.toggle('view-map');
+  document.body.classList.remove('view-table');
+  document.getElementById('view-toggle-btn').textContent = '\u2261 Table';
+  document.getElementById('map-toggle-btn').textContent = isMap ? '\u25a6 Cards' : '\ud83d\udccd Map';
+  if (isMap) buildMapView();
+}
+
+function buildMapView() {
+  const container = document.getElementById('map-container');
+  if (!mapInstance) {
+    mapInstance = L.map('map-container').setView([51.3, 0.5], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 18
+    }).addTo(mapInstance);
+  }
+  setTimeout(function() { mapInstance.invalidateSize(); }, 100);
+
+  mapMarkers.forEach(function(m) { mapInstance.removeLayer(m); });
+  mapMarkers = [];
+
+  const bounds = [];
+  document.querySelectorAll('.property-card').forEach(function(card) {
+    if (card.style.display === 'none') return;
+    const lat = parseFloat(card.dataset.lat);
+    const lng = parseFloat(card.dataset.lng);
+    if (isNaN(lat) || isNaN(lng)) return;
+
+    const id = card.dataset.id;
+    const addr = card.dataset.address || 'Unknown';
+    const price = parseInt(card.dataset.price) || 0;
+    const score = parseFloat(card.dataset.score) || 0;
+    const monthly = parseInt(card.dataset.monthly) || 0;
+    const beds = card.dataset.beds || '?';
+    const link = card.querySelector('.card-footer a[target="_blank"]');
+    const url = link ? link.href : '#';
+
+    const scoreColor = score >= 70 ? '#34d399' : score >= 50 ? '#fbbf24' : '#f87171';
+    const marker = L.circleMarker([lat, lng], {
+      radius: 8,
+      fillColor: scoreColor,
+      color: '#fff',
+      weight: 1,
+      fillOpacity: 0.85
+    }).addTo(mapInstance);
+
+    marker.bindPopup(
+      '<div class="map-popup">' +
+      '<strong>' + addr + '</strong>' +
+      '<span class="map-score" style="color:' + scoreColor + '">Score: ' + score + '</span> &middot; ' + beds + ' bed<br>' +
+      '\u00a3' + price.toLocaleString() + ' &middot; \u00a3' + monthly + '/mo<br>' +
+      '<a href="' + url + '" target="_blank">View listing</a> &middot; ' +
+      '<a href="#" class="map-show-card" data-property-id="' + id + '">Show card</a>' +
+      '</div>'
+    );
+
+    mapMarkers.push(marker);
+    bounds.push([lat, lng]);
+  });
+
+  if (bounds.length > 0) {
+    mapInstance.fitBounds(bounds, { padding: [30, 30] });
+  }
+}
+
+function showCardFromMap(id) {
+  document.body.classList.remove('view-map');
+  document.getElementById('map-toggle-btn').textContent = '\ud83d\udccd Map';
+  const cardEl = document.getElementById('card-' + id);
+  if (cardEl) {
+    cardEl.scrollIntoView({behavior: 'smooth', block: 'center'});
+    cardEl.style.outline = '2px solid var(--accent)';
+    setTimeout(function() { cardEl.style.outline = ''; }, 2000);
+  }
+}
+
+// Event delegation for map popup "Show card" links
+document.addEventListener('click', function(e) {
+  const link = e.target.closest('.map-show-card');
+  if (link) {
+    e.preventDefault();
+    showCardFromMap(link.dataset.propertyId);
+  }
+});
+
+let tableSortDir = {};
+function sortTable(col) {
+  const tbody = document.getElementById('table-body');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const dir = tableSortDir[col] === 'asc' ? 'desc' : 'asc';
+  tableSortDir[col] = dir;
+  rows.sort(function(a, b) {
+    let aVal = a.children[col].textContent.replace(/[\u00a3,\/mo d min]/g, '');
+    let bVal = b.children[col].textContent.replace(/[\u00a3,\/mo d min]/g, '');
+    const aNum = parseFloat(aVal), bNum = parseFloat(bVal);
+    if (!isNaN(aNum) && !isNaN(bNum)) return dir === 'asc' ? aNum - bNum : bNum - aNum;
+    return dir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+  });
+  rows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+// ==================================================================
+// VIEWINGS
+// ==================================================================
+
+let _viewingStore = {}; // { propId: { id, date, time, status, notes } }
+
+function _viewingsKey() { return 'property_viewings_v1'; }
+
+function _loadViewingStore() {
+  try { _viewingStore = JSON.parse(localStorage.getItem(_viewingsKey()) || '{}'); } catch(e) { _viewingStore = {}; }
+}
+
+function _saveViewingStore() {
+  localStorage.setItem(_viewingsKey(), JSON.stringify(_viewingStore));
+}
+
+// Open the viewing modal pre-filled for a property
+function openViewingForm(propId, address) {
+  _loadViewingStore();
+  const existing = _viewingStore[propId];
+  document.getElementById('viewing-modal-prop-id').value   = propId;
+  document.getElementById('viewing-modal-addr').textContent = address || '';
+  document.getElementById('viewing-modal-edit-id').value   = existing ? propId : '';
+
+  // Default date to upcoming Saturday (or today if already Saturday)
+  const now = new Date();
+  const day = now.getDay();
+  const daysToSat = day === 6 ? 0 : (6 - day);
+  const sat = new Date(now); sat.setDate(now.getDate() + daysToSat);
+  const satStr = sat.toISOString().slice(0, 10);
+
+  document.getElementById('viewing-date').value   = existing ? (existing.date || satStr) : satStr;
+  document.getElementById('viewing-time').value   = existing ? (existing.time || '10:00') : '10:00';
+  document.getElementById('viewing-status').value = existing ? (existing.status || 'scheduled') : 'scheduled';
+  document.getElementById('viewing-notes').value  = existing ? (existing.notes || '') : '';
+
+  const modal = document.getElementById('viewing-modal');
+  modal.style.display = 'flex';
+}
+
+function closeViewingModal() {
+  document.getElementById('viewing-modal').style.display = 'none';
+}
+
+function saveViewing() {
+  const propId  = parseInt(document.getElementById('viewing-modal-prop-id').value);
+  const date    = document.getElementById('viewing-date').value;
+  const time    = document.getElementById('viewing-time').value;
+  const status  = document.getElementById('viewing-status').value;
+  const notes   = document.getElementById('viewing-notes').value.trim();
+
+  if (!date) { showToast('Please pick a date'); return; }
+
+  _loadViewingStore();
+  _viewingStore[propId] = { propId, date, time, status, notes, savedAt: new Date().toISOString() };
+  _saveViewingStore();
+
+  // Also sync to server if available
+  if (location.protocol !== 'file:') {
+    fetch('/api/viewing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ property_id: propId, viewing_date: date, viewing_time: time, status, notes })
+    }).catch(() => {});
+  }
+
+  closeViewingModal();
+  renderViewings();
+  showToast('Viewing saved for ' + _fmtViewingDate(date, time));
+}
+
+function deleteViewing(propId) {
+  if (!confirm('Delete this viewing?')) return;
+  _loadViewingStore();
+  delete _viewingStore[propId];
+  _saveViewingStore();
+
+  if (location.protocol !== 'file:') {
+    fetch('/api/viewing/' + propId, { method: 'DELETE' }).catch(() => {});
+  }
+
+  renderViewings();
+  showToast('Viewing removed');
+}
+
+function _fmtViewingDate(date, time) {
+  if (!date) return 'Unknown date';
+  const d = new Date(date + (time ? 'T' + time : ''));
+  const parts = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  return parts + (time ? ' at ' + time : '');
+}
+
+function renderViewings() {
+  _loadViewingStore();
+  const list     = document.getElementById('viewings-list');
+  const empty    = document.getElementById('viewings-empty');
+  const countEl  = document.getElementById('viewings-count');
+  const navCount = document.getElementById('nav-viewings-count');
+  if (!list) return;
+
+  const entries = Object.values(_viewingStore);
+  // Sort: upcoming first, then past, then cancelled
+  const now = new Date();
+  entries.sort((a, b) => {
+    const da = new Date(a.date + (a.time ? 'T' + a.time : ''));
+    const db = new Date(b.date + (b.time ? 'T' + b.time : ''));
+    return da - db;
+  });
+
+  const scheduledCount = entries.filter(e => e.status !== 'cancelled').length;
+  if (countEl)  countEl.textContent  = '(' + entries.length + ')';
+  if (navCount) navCount.textContent = scheduledCount;
+
+  if (!entries.length) {
+    list.innerHTML = '';
+    if (empty) empty.style.display = '';
+    return;
+  }
+
+  if (empty) empty.style.display = 'none';
+
+  list.innerHTML = entries.map(v => {
+    const d    = v.date ? new Date(v.date) : null;
+    const day  = d ? d.getDate() : '?';
+    const mon  = d ? d.toLocaleDateString('en-GB', { month: 'short' }) : '';
+    const past = d && d < now && v.status === 'scheduled';
+
+    // Try to find address from the card
+    const card   = document.getElementById('card-' + v.propId);
+    const addr   = card ? (card.dataset.address || 'Property #' + v.propId) : 'Property #' + v.propId;
+    const price  = card ? parseInt(card.dataset.price || 0) : 0;
+
+    return `<div class="viewing-card${past ? ' vc-past' : ''}">
+      <div class="vc-date">
+        <div class="vc-date-day">${day}</div>
+        <div class="vc-date-month">${mon}</div>
+        ${v.time ? `<div class="vc-date-time">${v.time}</div>` : ''}
+      </div>
+      <div class="vc-body">
+        <div class="vc-addr">${addr}${price ? ' <span style="color:var(--muted);font-weight:400;font-size:0.8rem;">&middot; &pound;' + price.toLocaleString() + '</span>' : ''}</div>
+        <span class="vc-status ${v.status || 'scheduled'}">${v.status === 'completed' ? '&#10003; Completed' : v.status === 'cancelled' ? '&#10007; Cancelled' : '&#128197; Scheduled'}</span>
+        ${v.notes ? `<div class="vc-notes">${v.notes}</div>` : ''}
+        <div class="vc-actions">
+          <button onclick="openViewingForm(${v.propId}, '${addr.replace(/'/g, "\\'")}')">&#9998; Edit</button>
+          <button onclick="openInspectionForm(${v.propId}, ${v.propId}, '${addr.replace(/'/g, "\\'")}')">📋 Inspect</button>
+          ${card ? `<button onclick="card_${v.propId}_scroll()">Show Card</button>` : ''}
+        </div>
+      </div>
+      <button class="vc-del" onclick="deleteViewing(${v.propId})" title="Delete viewing">&times;</button>
+    </div>`;
+  }).join('');
+
+  // Inject scroll helpers
+  entries.forEach(v => {
+    window['card_' + v.propId + '_scroll'] = function() {
+      const c = document.getElementById('card-' + v.propId);
+      if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'center' }); c.style.outline = '2px solid var(--accent)'; setTimeout(() => c.style.outline = '', 2000); }
+    };
+  });
+}
+
+// Close viewing modal on backdrop click
+document.getElementById('viewing-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeViewingModal();
+});
+
+// Load viewings on page load
+document.addEventListener('DOMContentLoaded', function() {
+  renderViewings();
+  // Also pull from server if available
+  if (location.protocol !== 'file:') {
+    fetch('/api/viewings').then(r => r.json()).then(data => {
+      if (data.viewings && data.viewings.length) {
+        _loadViewingStore();
+        data.viewings.forEach(v => {
+          if (!_viewingStore[v.property_id]) {
+            _viewingStore[v.property_id] = {
+              propId: v.property_id,
+              date:   v.viewing_date   || '',
+              time:   v.viewing_time   || '',
+              status: v.status         || 'scheduled',
+              notes:  v.notes          || '',
+            };
+          }
+        });
+        _saveViewingStore();
+        renderViewings();
+      }
+    }).catch(() => {});
+  }
+});
+
+// ==================================================================
+// OFFERS
+// ==================================================================
+
+let _offerStore = {}; // { offerId: { id, propId, amount, date, status, notes } }
+let _offerNextId = 1;
+
+function _offersKey() { return 'property_offers_v1'; }
+
+function _loadOfferStore() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(_offersKey()) || '{}');
+    _offerStore = raw.offers || {};
+    _offerNextId = raw.nextId || 1;
+  } catch(e) { _offerStore = {}; _offerNextId = 1; }
+}
+
+function _saveOfferStore() {
+  localStorage.setItem(_offersKey(), JSON.stringify({ offers: _offerStore, nextId: _offerNextId }));
+}
+
+function openOfferForm(propId, address, askingPrice) {
+  _loadOfferStore();
+  document.getElementById('offer-modal-prop-id').value = propId;
+  document.getElementById('offer-modal-edit-id').value = '';
+  document.getElementById('offer-modal-addr').textContent = address || '';
+  document.getElementById('offer-modal-asking').textContent = askingPrice ? 'Asking: £' + parseInt(askingPrice).toLocaleString() : 'Asking: —';
+  document.getElementById('offer-amount').value = askingPrice ? Math.round(askingPrice * 0.95) : '';
+  document.getElementById('offer-date').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('offer-status').value = 'pending';
+  document.getElementById('offer-notes').value = '';
+  document.getElementById('offer-modal').style.display = 'flex';
+}
+
+function openOfferEdit(offerId) {
+  _loadOfferStore();
+  const offer = _offerStore[offerId];
+  if (!offer) return;
+  document.getElementById('offer-modal-prop-id').value = offer.propId;
+  document.getElementById('offer-modal-edit-id').value = offerId;
+  const card = document.getElementById('card-' + offer.propId);
+  document.getElementById('offer-modal-addr').textContent = card ? (card.dataset.address || '') : '';
+  const askingPrice = card ? parseInt(card.dataset.price) : 0;
+  document.getElementById('offer-modal-asking').textContent = askingPrice ? 'Asking: £' + askingPrice.toLocaleString() : 'Asking: —';
+  document.getElementById('offer-amount').value = offer.amount || '';
+  document.getElementById('offer-date').value = offer.date || '';
+  document.getElementById('offer-status').value = offer.status || 'pending';
+  document.getElementById('offer-notes').value = offer.notes || '';
+  document.getElementById('offer-modal').style.display = 'flex';
+}
+
+function closeOfferModal() {
+  document.getElementById('offer-modal').style.display = 'none';
+}
+
+function saveOffer() {
+  const propId = parseInt(document.getElementById('offer-modal-prop-id').value);
+  const editId = document.getElementById('offer-modal-edit-id').value;
+  const amount = parseInt(document.getElementById('offer-amount').value);
+  const offerDate = document.getElementById('offer-date').value;
+  const status = document.getElementById('offer-status').value;
+  const notes = document.getElementById('offer-notes').value.trim();
+
+  if (!amount || amount <= 0) { showToast('Enter a valid offer amount'); return; }
+  if (!offerDate) { showToast('Please set an offer date'); return; }
+
+  _loadOfferStore();
+  const oid = editId || ('local_' + _offerNextId++);
+  _offerStore[oid] = { id: oid, propId, amount, date: offerDate, status, notes, savedAt: new Date().toISOString() };
+  _saveOfferStore();
+
+  // Sync to server
+  if (location.protocol !== 'file:') {
+    const endpoint = editId && !editId.startsWith('local_') ? '/api/offer/' + editId + '/update' : '/api/offer';
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ property_id: propId, amount, offer_date: offerDate, status, notes })
+    }).catch(() => {});
+  }
+
+  closeOfferModal();
+  renderOffers();
+  showToast('Offer of £' + amount.toLocaleString() + ' recorded');
+}
+
+function deleteOffer(offerId) {
+  if (!confirm('Delete this offer?')) return;
+  _loadOfferStore();
+  delete _offerStore[offerId];
+  _saveOfferStore();
+
+  if (location.protocol !== 'file:' && !String(offerId).startsWith('local_')) {
+    fetch('/api/offer/' + offerId + '/delete', { method: 'POST' }).catch(() => {});
+  }
+
+  renderOffers();
+  showToast('Offer removed');
+}
+
+function renderOffers() {
+  _loadOfferStore();
+  const list = document.getElementById('offers-list');
+  const empty = document.getElementById('offers-empty');
+  const countEl = document.getElementById('offers-count');
+  const navCount = document.getElementById('nav-offers-count');
+  if (!list) return;
+
+  const entries = Object.values(_offerStore);
+  entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  const activeCount = entries.filter(e => e.status === 'pending' || e.status === 'countered').length;
+  if (countEl) countEl.textContent = '(' + entries.length + ')';
+  if (navCount) navCount.textContent = activeCount;
+
+  if (!entries.length) {
+    list.innerHTML = '';
+    if (empty) empty.style.display = '';
+    return;
+  }
+
+  if (empty) empty.style.display = 'none';
+
+  const statusIcons = { pending: '⏳', accepted: '✅', rejected: '❌', countered: '↩️', withdrawn: '🚫' };
+  const statusColors = { pending: 'var(--amber)', accepted: 'var(--green)', rejected: 'var(--red)', countered: 'var(--accent)', withdrawn: 'var(--muted)' };
+
+  list.innerHTML = entries.map(o => {
+    const card = document.getElementById('card-' + o.propId);
+    const addr = card ? (card.dataset.address || 'Property #' + o.propId) : 'Property #' + o.propId;
+    const askingPrice = card ? parseInt(card.dataset.price || 0) : 0;
+    const pctOfAsking = askingPrice > 0 ? Math.round((o.amount / askingPrice) * 100) : 0;
+
+    return `<div class="viewing-card" style="border-left: 3px solid ${statusColors[o.status] || 'var(--border)'};">
+      <div class="vc-date" style="min-width:70px;text-align:center;">
+        <div style="font-size:1.1rem;">${statusIcons[o.status] || '?'}</div>
+        <div style="font-size:0.68rem;color:var(--muted);margin-top:2px;">${o.date || ''}</div>
+      </div>
+      <div class="vc-body">
+        <div class="vc-addr">${addr}</div>
+        <div style="font-size:0.85rem;font-weight:600;color:var(--text);">£${(o.amount || 0).toLocaleString()} ${pctOfAsking ? '<span style="color:var(--muted);font-weight:400;font-size:0.75rem;">(' + pctOfAsking + '% of asking)</span>' : ''}</div>
+        <span style="font-size:0.72rem;color:${statusColors[o.status] || 'var(--muted)'};font-weight:600;text-transform:uppercase;">${o.status || 'pending'}</span>
+        ${o.notes ? '<div class="vc-notes">' + o.notes + '</div>' : ''}
+        <div class="vc-actions">
+          <button onclick="openOfferEdit('${o.id}')">✏ Edit</button>
+          ${card ? `<button onclick="card_offer_${o.propId}_scroll()">Show Card</button>` : ''}
+        </div>
+      </div>
+      <button class="vc-del" onclick="deleteOffer('${o.id}')" title="Delete offer">&times;</button>
+    </div>`;
+  }).join('');
+
+  entries.forEach(o => {
+    window['card_offer_' + o.propId + '_scroll'] = function() {
+      const c = document.getElementById('card-' + o.propId);
+      if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'center' }); c.style.outline = '2px solid var(--green)'; setTimeout(() => c.style.outline = '', 2000); }
+    };
+  });
+}
+
+// Close offer modal on backdrop click
+document.getElementById('offer-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeOfferModal();
+});
+
+// Load offers on page load
+document.addEventListener('DOMContentLoaded', function() {
+  renderOffers();
+  if (location.protocol !== 'file:') {
+    fetch('/api/offers').then(r => r.json()).then(data => {
+      if (data.offers && data.offers.length) {
+        _loadOfferStore();
+        data.offers.forEach(o => {
+          _offerStore[o.id] = {
+            id: o.id, propId: o.property_id,
+            amount: o.amount, date: o.offer_date,
+            status: o.status || 'pending', notes: o.notes || '',
+          };
+        });
+        _saveOfferStore();
+        renderOffers();
+      }
+    }).catch(() => {});
+  }
+});
+
+// ==================================================================
+// POST-VIEWING INSPECTIONS
+// ==================================================================
+
+function openInspectionForm(viewingId, propId, address) {
+  document.getElementById('inspection-viewing-id').value = viewingId;
+  document.getElementById('inspection-prop-id').value = propId;
+  document.getElementById('inspection-modal-addr').textContent = address || '';
+  document.getElementById('insp-condition').value = 3;
+  document.getElementById('insp-light').value = 3;
+  document.getElementById('insp-noise').value = 3;
+  document.getElementById('insp-parking').value = '';
+  document.getElementById('insp-storage').value = '';
+  document.getElementById('insp-pros').value = '';
+  document.getElementById('insp-cons').value = '';
+  document.getElementById('insp-would-offer').checked = false;
+
+  // Load existing inspection if available
+  if (location.protocol !== 'file:') {
+    fetch('/api/inspection/' + viewingId).then(r => r.json()).then(data => {
+      if (data.inspection) {
+        const i = data.inspection;
+        document.getElementById('insp-condition').value = i.condition_score || 3;
+        document.getElementById('insp-light').value = i.light_score || 3;
+        document.getElementById('insp-noise').value = i.noise_score || 3;
+        document.getElementById('insp-parking').value = i.parking || '';
+        document.getElementById('insp-storage').value = i.storage || '';
+        document.getElementById('insp-pros').value = i.pros || '';
+        document.getElementById('insp-cons').value = i.cons || '';
+        document.getElementById('insp-would-offer').checked = !!i.would_offer;
+      }
+    }).catch(() => {});
+  }
+
+  document.getElementById('inspection-modal').style.display = 'flex';
+}
+
+function closeInspectionModal() {
+  document.getElementById('inspection-modal').style.display = 'none';
+}
+
+function saveInspection() {
+  const viewingId = parseInt(document.getElementById('inspection-viewing-id').value);
+  const propId = parseInt(document.getElementById('inspection-prop-id').value);
+  const data = {
+    viewing_id: viewingId,
+    property_id: propId,
+    condition_score: parseInt(document.getElementById('insp-condition').value) || 3,
+    light_score: parseInt(document.getElementById('insp-light').value) || 3,
+    noise_score: parseInt(document.getElementById('insp-noise').value) || 3,
+    parking: document.getElementById('insp-parking').value,
+    storage: document.getElementById('insp-storage').value,
+    pros: document.getElementById('insp-pros').value.trim(),
+    cons: document.getElementById('insp-cons').value.trim(),
+    would_offer: document.getElementById('insp-would-offer').checked,
+  };
+
+  if (location.protocol !== 'file:') {
+    fetch('/api/inspection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(r => r.json()).then(() => {
+      showToast('Inspection saved');
+      closeInspectionModal();
+    }).catch(() => showToast('Failed to save inspection'));
+  } else {
+    showToast('Inspection saved (offline)');
+    closeInspectionModal();
+  }
+}
+
+// Close inspection modal on backdrop click
+document.getElementById('inspection-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeInspectionModal();
+});
+
+// ==================================================================
+// SAVED FILTER PRESETS
+// ==================================================================
+
+const _filterPresetsKey = 'property_filter_presets_v1';
+
+function _getFilterState() {
+  return {
+    search: document.getElementById('filter-search')?.value || '',
+    bedMin: document.getElementById('filter-bed-min')?.value || '',
+    bedMax: document.getElementById('filter-bed-max')?.value || '',
+    priceMax: document.getElementById('filter-price-max')?.value || '',
+    monthlyMax: document.getElementById('filter-monthly-max')?.value || '',
+    tenure: document.getElementById('filter-tenure')?.value || '',
+    epc: document.getElementById('filter-epc')?.value || '',
+    sort: document.getElementById('filter-sort')?.value || '',
+    reduced: _reducedFilterActive || false,
+  };
+}
+
+function _applyFilterState(state) {
+  if (!state) return;
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  setVal('filter-search', state.search);
+  setVal('filter-bed-min', state.bedMin);
+  setVal('filter-bed-max', state.bedMax);
+  setVal('filter-price-max', state.priceMax);
+  setVal('filter-monthly-max', state.monthlyMax);
+  setVal('filter-tenure', state.tenure);
+  setVal('filter-epc', state.epc);
+  setVal('filter-sort', state.sort);
+  if (state.reduced && !_reducedFilterActive) toggleReducedFilter();
+  else if (!state.reduced && _reducedFilterActive) toggleReducedFilter();
+  applyFilters();
+}
+
+function _getPresets() {
+  try { return JSON.parse(localStorage.getItem(_filterPresetsKey) || '{}'); } catch(e) { return {}; }
+}
+
+function _savePresets(presets) {
+  localStorage.setItem(_filterPresetsKey, JSON.stringify(presets));
+}
+
+function saveFilterPreset() {
+  const name = prompt('Name this filter preset:');
+  if (!name || !name.trim()) return;
+  const presets = _getPresets();
+  presets[name.trim()] = _getFilterState();
+  _savePresets(presets);
+  renderPresetDropdown();
+  showToast('Filter preset "' + name.trim() + '" saved');
+}
+
+function loadFilterPreset(name) {
+  if (name === '__save__') { saveFilterPreset(); return; }
+  if (name === '__delete__') {
+    const delName = prompt('Enter preset name to delete:');
+    if (delName) {
+      const presets = _getPresets();
+      delete presets[delName.trim()];
+      _savePresets(presets);
+      renderPresetDropdown();
+      showToast('Preset deleted');
+    }
+    return;
+  }
+  const presets = _getPresets();
+  if (presets[name]) {
+    _applyFilterState(presets[name]);
+    showToast('Loaded preset: ' + name);
+  }
+}
+
+function renderPresetDropdown() {
+  let dd = document.getElementById('preset-dropdown');
+  if (!dd) return;
+  const presets = _getPresets();
+  const names = Object.keys(presets);
+  dd.innerHTML = '<option value="">🔖 Presets</option>';
+  names.forEach(n => { dd.innerHTML += '<option value="' + n + '">' + n + '</option>'; });
+  dd.innerHTML += '<option value="__save__">💾 Save current…</option>';
+  if (names.length) dd.innerHTML += '<option value="__delete__">🗑 Delete preset…</option>';
+}
+
+// Inject preset dropdown into filter bar
+document.addEventListener('DOMContentLoaded', function() {
+  const filterBar = document.getElementById('filter-bar');
+  if (filterBar) {
+    const group = document.createElement('div');
+    group.className = 'filter-group';
+    group.innerHTML = '<select id="preset-dropdown" onchange="loadFilterPreset(this.value); this.value=\'\';" style="padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:0.78rem;"><option value="">🔖 Presets</option></select>';
+    filterBar.appendChild(group);
+    renderPresetDropdown();
+  }
+});
+</script>

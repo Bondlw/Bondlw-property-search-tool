@@ -1,9 +1,12 @@
 """SQLite database connection manager and schema creation."""
 
+import logging
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS properties (
@@ -185,11 +188,45 @@ CREATE TABLE IF NOT EXISTS viewings (
 CREATE INDEX IF NOT EXISTS idx_viewings_property ON viewings(property_id);
 CREATE INDEX IF NOT EXISTS idx_viewings_date ON viewings(viewing_date);
 
+CREATE TABLE IF NOT EXISTS offers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id),
+    amount INTEGER NOT NULL,
+    offer_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_offers_property ON offers(property_id);
+CREATE INDEX IF NOT EXISTS idx_offers_status ON offers(status);
+
+CREATE TABLE IF NOT EXISTS viewing_inspections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    viewing_id INTEGER NOT NULL REFERENCES viewings(id),
+    property_id INTEGER NOT NULL REFERENCES properties(id),
+    condition_score INTEGER DEFAULT 0,
+    light_score INTEGER DEFAULT 0,
+    noise_score INTEGER DEFAULT 0,
+    parking TEXT DEFAULT '',
+    storage TEXT DEFAULT '',
+    pros TEXT DEFAULT '',
+    cons TEXT DEFAULT '',
+    would_offer INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(viewing_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inspections_property ON viewing_inspections(property_id);
+
 CREATE INDEX IF NOT EXISTS idx_properties_postcode ON properties(postcode);
 CREATE INDEX IF NOT EXISTS idx_properties_portal_id ON properties(portal, portal_id);
 CREATE INDEX IF NOT EXISTS idx_properties_url_norm ON properties(url_normalised);
 CREATE INDEX IF NOT EXISTS idx_properties_active ON properties(is_active);
 CREATE INDEX IF NOT EXISTS idx_properties_first_seen ON properties(first_seen_date);
+CREATE INDEX IF NOT EXISTS idx_properties_active_first_seen ON properties(is_active, first_seen_date DESC);
 CREATE INDEX IF NOT EXISTS idx_price_history_property ON price_history(property_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_date ON price_history(recorded_date);
 """
@@ -232,10 +269,16 @@ class Database:
                 self._migrate_v3()
             if current < 4:
                 self._migrate_v4()
+            if current < 5:
+                self._migrate_v5()
         self.conn.commit()
 
     def _migrate_v2(self):
-        """Add images column and favourites table."""
+        """v2: Add images column and favourites table.
+
+        - properties.images: store image URLs as JSON array for gallery display
+        - favourites table: allow users to mark properties as favourites with notes
+        """
         cols = [c[1] for c in self.conn.execute("PRAGMA table_info(properties)").fetchall()]
         if "images" not in cols:
             self.conn.execute("ALTER TABLE properties ADD COLUMN images TEXT")
@@ -251,7 +294,14 @@ class Database:
         self.conn.commit()
 
     def _migrate_v3(self):
-        """Add supermarket aggregate columns to enrichment_data and new property columns."""
+        """v3: Add supermarket aggregates and new property detail columns.
+
+        - enrichment_data: nearest_supermarket_name/distance_m/walk_min — stores best
+          supermarket across all chains (not just Lidl/Aldi)
+        - properties: floorplan_urls, video_url, brochure_url, rooms — detail page
+          data captured during listing detail fetch
+        - properties.price_reduced: flag set when a price drop is detected vs. prior run
+        """
         e_cols = {c[1] for c in self.conn.execute("PRAGMA table_info(enrichment_data)").fetchall()}
         for col, coltype in [
             ("nearest_supermarket_name", "TEXT"),
@@ -277,7 +327,11 @@ class Database:
         self.conn.commit()
 
     def _migrate_v4(self):
-        """Add viewings table."""
+        """v4: Add viewings table for scheduling property viewings.
+
+        - viewings: property_id, viewing_date, viewing_time, status (scheduled/completed/cancelled),
+          notes. Indexed by property_id and date for fast lookups.
+        """
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS viewings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -295,10 +349,81 @@ class Database:
         self.conn.execute("UPDATE schema_version SET version = 4")
         self.conn.commit()
 
+    def _migrate_v5(self):
+        """v5: Add offers tracking and post-viewing inspection records.
+
+        - offers: track offers made on properties with amount, date, status
+          (pending/accepted/rejected/withdrawn), and notes
+        - viewing_inspections: post-viewing data linked to a viewing record —
+          condition/light/noise scores (0-5), parking, storage, pros/cons text,
+          and would_offer flag. UNIQUE on viewing_id (one inspection per viewing).
+        """
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS offers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_id INTEGER NOT NULL REFERENCES properties(id),
+                amount INTEGER NOT NULL,
+                offer_date TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                notes TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_offers_property ON offers(property_id);
+            CREATE INDEX IF NOT EXISTS idx_offers_status ON offers(status);
+            CREATE TABLE IF NOT EXISTS viewing_inspections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                viewing_id INTEGER NOT NULL REFERENCES viewings(id),
+                property_id INTEGER NOT NULL REFERENCES properties(id),
+                condition_score INTEGER DEFAULT 0,
+                light_score INTEGER DEFAULT 0,
+                noise_score INTEGER DEFAULT 0,
+                parking TEXT DEFAULT '',
+                storage TEXT DEFAULT '',
+                pros TEXT DEFAULT '',
+                cons TEXT DEFAULT '',
+                would_offer INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(viewing_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_inspections_property ON viewing_inspections(property_id);
+        """)
+        self.conn.execute("UPDATE schema_version SET version = 5")
+        self.conn.commit()
+
     def close(self):
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+    def backup(self, backup_dir: str | Path = "data/backups") -> str | None:
+        """Create a SQLite backup using VACUUM INTO.
+
+        Returns the backup file path, or None if backup failed.
+        """
+        from datetime import datetime
+
+        backup_path = Path(backup_dir)
+        backup_path.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = backup_path / f"property_search_{timestamp}.db"
+
+        try:
+            self.conn.execute(f"VACUUM INTO ?", (str(backup_file),))
+            logger.info(f"Database backed up to {backup_file}")
+
+            # Keep only the 5 most recent backups
+            backups = sorted(backup_path.glob("property_search_*.db"), reverse=True)
+            for old_backup in backups[5:]:
+                old_backup.unlink()
+                logger.debug(f"Removed old backup: {old_backup}")
+
+            return str(backup_file)
+        except sqlite3.Error as exc:
+            logger.error(f"Backup failed: {exc}")
+            return None
 
     def __enter__(self):
         self.init_schema()

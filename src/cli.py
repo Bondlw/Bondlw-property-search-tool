@@ -3,6 +3,7 @@
 import logging
 import sys
 import time
+import traceback
 from datetime import date
 from pathlib import Path
 
@@ -56,8 +57,10 @@ def init(ctx):
 @click.option("--portal", default="rightmove", help="Portal to search (rightmove)")
 @click.option("--area", default="all", help="Area name or 'all'")
 @click.option("--skip-detail", is_flag=True, help="Skip fetching individual listing details")
+@click.option("--dry-run", is_flag=True, help="Show what would be scraped without saving to database")
+@click.option("--max-properties", default=0, type=int, help="Max properties to process per area (0=all)")
 @click.pass_context
-def run(ctx, portal, area, skip_detail):
+def run(ctx, portal, area, skip_detail, dry_run, max_properties):
     """Full pipeline: search -> fetch details -> generate report."""
     config = ctx.obj["config"]
     db_path = get_db_path()
@@ -93,12 +96,19 @@ def run(ctx, portal, area, skip_detail):
             for portal_name, scraper in scrapers.items():
                 try:
                     listings = scraper.search(area_config, config.get("budget", {}))
+                    if max_properties > 0:
+                        listings = listings[:max_properties]
                     total_found += len(listings)
 
                     for listing in listings:
                         addr_lower = (listing.address or listing.title or "").lower()
                         if any(term in addr_lower for term in excluded_terms):
                             total_excluded += 1
+                            continue
+
+                        if dry_run:
+                            click.echo(f"  [DRY RUN] {listing.address} — £{listing.price:,} ({listing.property_type or '?'})")
+                            total_new += 1
                             continue
 
                         url_norm = normalise_url(listing.url)
@@ -115,10 +125,13 @@ def run(ctx, portal, area, skip_detail):
 
                 except Exception as e:
                     error_msg = f"Error scraping {portal_name}/{area_name}: {e}"
-                    logger.error(error_msg)
+                    logger.error(error_msg, exc_info=True)
                     errors.append(error_msg)
 
         click.echo(f"\nSearch: Found {total_found} | New: {total_new} | Updated: {total_updated} | Excluded: {total_excluded}")
+        if dry_run:
+            click.echo("\n[DRY RUN] No data was saved to the database.")
+            return
 
         # Step 2: Fetch details
         if not skip_detail:
@@ -153,7 +166,7 @@ def run(ctx, portal, area, skip_detail):
                         click.echo(f"  Deactivated (410 Gone): {prop.get('address', prop['url'])}")
                     except Exception as e:
                         detail_fail += 1
-                        logger.error(f"Detail fetch error: {e}")
+                        logger.error(f"Detail fetch error: {e}", exc_info=True)
 
                     if (i + 1) % 10 == 0:
                         click.echo(f"  Progress: {i+1}/{len(needs_detail)}")
@@ -175,7 +188,7 @@ def run(ctx, portal, area, skip_detail):
                         enrichment_data = enrichment_svc.enrich(prop, existing)
                         repo.upsert_enrichment(enrichment_data)
                     except Exception as e:
-                        logger.error(f"Enrichment error for {prop.get('address')}: {e}")
+                        logger.error(f"Enrichment error for {prop.get('address')}: {e}", exc_info=True)
                     if (i + 1) % 5 == 0:
                         click.echo(f"  Progress: {i+1}/{len(needs_enrichment)}")
                 click.echo(f"Enrichment done for {len(needs_enrichment)} properties.")
@@ -184,16 +197,19 @@ def run(ctx, portal, area, skip_detail):
 
         # Step 4: Generate report
         click.echo("\n=== Step 4: Generating report ===")
+
+        # Backup database before report generation
+        backup_path = db.backup()
+        if backup_path:
+            click.echo(f"Database backed up: {backup_path}")
+
         properties = repo.get_active_properties()
         enrichment_map = {}
-        price_history_map = {}
+        price_history_map = repo.get_all_price_histories()
         for prop in properties:
             e = repo.get_enrichment(prop["id"])
             if e:
                 enrichment_map[prop["id"]] = e
-            ph = repo.get_price_history(prop["id"])
-            if ph:
-                price_history_map[prop["id"]] = ph
 
         output_dir = Path(__file__).parent.parent / "output" / "reports"
         output_path = str(output_dir / f"report_{today}.html")
@@ -242,8 +258,8 @@ def run(ctx, portal, area, skip_detail):
         import webbrowser
         try:
             webbrowser.open(f"file:///{Path(path).resolve()}")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to open browser for report: %s", exc)
 
 
 @cli.command()
@@ -321,7 +337,7 @@ def search(ctx, portal, area):
 
                 except Exception as e:
                     error_msg = f"Error scraping {portal_name}/{area_name}: {e}"
-                    logger.error(error_msg)
+                    logger.error(error_msg, exc_info=True)
                     errors.append(error_msg)
 
         duration = time.time() - start_time
@@ -407,7 +423,7 @@ def detail(ctx, limit):
                 click.echo(f"  [{i+1}/{len(props)}] Deactivated (410 Gone): {prop.get('address', url)}")
             except Exception as e:
                 failed += 1
-                logger.error(f"Error fetching detail for {url}: {e}")
+                logger.error(f"Error fetching detail for {url}: {e}", exc_info=True)
 
         duration = time.time() - start_time
         click.echo(
@@ -467,7 +483,7 @@ def enrich(ctx, limit):
 
             except Exception as e:
                 failed += 1
-                logger.error(f"Enrichment failed for {prop.get('address')}: {e}")
+                logger.error(f"Enrichment failed for {prop.get('address')}: {e}", exc_info=True)
 
         duration = time.time() - start_time
         click.echo(f"\n--- Enrichment Complete ---\nSuccess: {success} | Failed: {failed} | {duration:.1f}s")
@@ -525,7 +541,7 @@ def backfill_supermarkets(ctx, limit):
                     click.echo(f"  [{i+1}/{len(props)}] {prop['address'][:45]} — no supermarkets found")
             except Exception as e:
                 failed += 1
-                logger.error(f"Supermarket backfill error for {prop['address']}: {e}")
+                logger.error(f"Supermarket backfill error for {prop['address']}: {e}", exc_info=True)
 
             if (i + 1) % 20 == 0:
                 click.echo(f"  Progress: {i+1}/{len(props)} ({success} ok, {failed} failed)")
@@ -590,7 +606,7 @@ def backfill_stations(ctx, limit):
                     click.echo(f"  [{i+1}/{len(props)}] {prop['address'][:45]} — no stations found")
             except Exception as e:
                 failed += 1
-                logger.error(f"Station backfill error for {prop['address']}: {e}")
+                logger.error(f"Station backfill error for {prop['address']}: {e}", exc_info=True)
 
             if (i + 1) % 20 == 0:
                 click.echo(f"  Progress: {i+1}/{len(props)} ({success} ok, {failed} failed)")
@@ -617,18 +633,20 @@ def report(ctx):
             click.echo("No active properties in database.")
             return
 
+        # Backup database before report generation
+        backup_path = db.backup()
+        if backup_path:
+            click.echo(f"Database backed up: {backup_path}")
+
         click.echo(f"Generating report for {len(properties)} properties...")
 
         # Load enrichment and price history data
         enrichment_map = {}
-        price_history_map = {}
+        price_history_map = repo.get_all_price_histories()
         for prop in properties:
             e = repo.get_enrichment(prop["id"])
             if e:
                 enrichment_map[prop["id"]] = e
-            ph = repo.get_price_history(prop["id"])
-            if ph:
-                price_history_map[prop["id"]] = ph
 
         generator = ReportGenerator(config)
         fav_ids = repo.get_favourite_ids()
@@ -646,8 +664,8 @@ def report(ctx):
         try:
             webbrowser.open(f"file:///{Path(path).resolve()}")
             click.echo("Opened in browser.")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to open browser for report: %s", exc)
 
 
 @cli.command()

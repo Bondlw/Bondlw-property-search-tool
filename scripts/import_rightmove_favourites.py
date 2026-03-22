@@ -56,7 +56,10 @@ def _extract_ids_from_page(page) -> list[str]:
 
 
 def scrape_saved_ids() -> list[str]:
-    """Launch a browser, let user log in, then collect all saved property IDs."""
+    """Launch Edge via Playwright and collect all saved property IDs.
+    
+    Saves cookies/storage state so login is remembered for future runs.
+    """
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
     except ImportError:
@@ -65,45 +68,60 @@ def scrape_saved_ids() -> list[str]:
         sys.exit(1)
 
     all_ids: list[str] = []
+    storage_path = str(REPO_ROOT / ".playwright-state.json")
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=False, slow_mo=100)
-        page = browser.new_page()
-        page.goto(SAVED_URL, wait_until="domcontentloaded")
+        print("\n  Launching Edge...")
 
-        # Wait until the user is past the login page (up to 3 minutes)
-        print("\nA browser window has opened.")
-        print("Please log in to Rightmove in that window.")
-        print("The script will detect when you're on the saved-properties page and continue.\n")
+        browser = pw.chromium.launch(
+            channel="msedge",
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
 
-        # Poll until we land on the actual /user/saved-properties path (not the login redirect)
-        deadline = time.time() + 180
-        while time.time() < deadline:
-            current_url = page.url
-            if "rightmove.co.uk/user/saved-properties" in current_url and "login" not in current_url:
-                print(f"  Detected saved-properties page: {current_url}")
-                break
-            time.sleep(2)
+        # Load saved cookies/storage if available from a previous run
+        if Path(storage_path).exists():
+            print("  Loading saved login session...")
+            context = browser.new_context(storage_state=storage_path)
         else:
-            print("Timed out waiting for login. Please run the script again and log in within 3 minutes.")
-            browser.close()
-            sys.exit(1)
+            context = browser.new_context()
+
+        page = context.new_page()
+        page.goto(SAVED_URL, wait_until="domcontentloaded", timeout=30_000)
+
+        # If redirected to login, wait for the user to complete it
+        if "/login" in page.url.split("?")[0] or "/account" in page.url.split("?")[0]:
+            print("  ⏳ Please log in to Rightmove in the browser window.")
+            print("     Google SSO and all login methods should work.")
+            print("     Waiting up to 5 minutes...\n")
+            try:
+                # Match the path after the domain — excludes ?from= query params
+                page.wait_for_url(
+                    re.compile(r"\.co\.uk/user/saved-properties"),
+                    timeout=300_000,
+                )
+            except PWTimeout:
+                print("  ERROR: Timed out waiting for login (5 minutes).")
+                browser.close()
+                sys.exit(1)
+            time.sleep(2)
+
+        print(f"  ✓ On saved-properties page: {page.url[:80]}")
 
         # Scrape all pages
         page_num = 0
         while True:
             page_num += 1
 
-            # Wait for property cards to appear (up to 15s), then grab IDs
             try:
                 page.wait_for_selector(
                     'a[href*="/properties/"], [data-test*="property"], .propertyCard, .l-searchResult',
                     timeout=15_000,
                 )
             except PWTimeout:
-                pass  # no cards found — will still try the extract
+                pass
 
-            time.sleep(1.5)  # let lazy-loaded content settle
+            time.sleep(1.5)
             found = _extract_ids_from_page(page)
             new_ids = [pid for pid in found if pid not in all_ids]
             all_ids.extend(new_ids)
@@ -113,7 +131,6 @@ def scrape_saved_ids() -> list[str]:
                 print("  No new IDs on this page — stopping.")
                 break
 
-            # Try to click "Next page" if it exists
             next_btn = page.query_selector(
                 'a[data-test="pagination-next"], button[aria-label="Next page"], '
                 'a[aria-label="Next"], .pagination-list a:last-child'
@@ -127,6 +144,9 @@ def scrape_saved_ids() -> list[str]:
             else:
                 break
 
+        # Save cookies/storage for next run so login persists
+        context.storage_state(path=storage_path)
+        print("  ✓ Login session saved for future runs.")
         browser.close()
 
     return list(dict.fromkeys(all_ids))  # deduplicate preserving order
