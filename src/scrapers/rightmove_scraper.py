@@ -41,14 +41,13 @@ class RightmoveScraper(BaseScraper):
             return []
 
         # Determine price range — use the widest range across tenure types
-        # No stretch buffer — absolute_max IS the max listed price we'd consider
         min_price = min(
             budget_config.get("freehold", {}).get("ideal_min", 170000),
             budget_config.get("leasehold", {}).get("ideal_min", 170000),
         )
         max_price = max(
-            budget_config.get("freehold", {}).get("absolute_max", 200000),
-            budget_config.get("leasehold", {}).get("absolute_max", 200000),
+            budget_config.get("freehold", {}).get("search_max", 200000),
+            budget_config.get("leasehold", {}).get("search_max", 200000),
         )
 
         all_listings = []
@@ -241,7 +240,7 @@ class RightmoveScraper(BaseScraper):
             return listing
 
         except Exception as e:
-            logger.warning(f"Failed to extract from card {prop_id}: {e}")
+            logger.warning(f"Failed to extract from card {prop_id}: {e}", exc_info=True)
             return None
 
     def _parse_listing_page(self, html: str, url: str) -> RawListing | None:
@@ -449,7 +448,7 @@ class RightmoveScraper(BaseScraper):
             return listing
 
         except Exception as e:
-            logger.warning(f"Failed to parse listing detail: {e}")
+            logger.warning(f"Failed to parse listing detail for {url}: {e}", exc_info=True)
             return None
 
     def _extract_stations(self, prop_data: dict) -> list[dict]:

@@ -30,10 +30,8 @@ MAJOR_SUPERMARKET_CHAINS = [
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Approximate distance in metres between two lat/lng points."""
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
-    return 2 * math.asin(math.sqrt(a)) * 6_371_000
+    from ..utils.geo import haversine_metres
+    return haversine_metres(lat1, lng1, lat2, lng2)
 
 
 def _walk_min(distance_m: float) -> int:
@@ -55,7 +53,7 @@ class EnrichmentService:
                 return r.json()
             logger.debug(f"HTTP {r.status_code} from {url}")
         except Exception as e:
-            logger.debug(f"Request failed for {url}: {e}")
+            logger.debug(f"Request failed for {url}: {e}", exc_info=True)
         return None
 
     # ── Crime ──────────────────────────────────────────────────────────────
@@ -247,12 +245,16 @@ class EnrichmentService:
                 logger.debug(f"Fetching crime for {prop.get('address')} ({lat}, {lng})")
                 crime = self.fetch_crime(lat, lng)
                 if crime:
-                    result["crime_summary"] = json.dumps(crime)
-                    result["crime_data_date"] = crime.get("month")
-                    # Simple safety score: 100 - penalties
-                    total = crime.get("total", 0)
-                    score = max(0.0, 100.0 - total * 2)
-                    result["crime_safety_score"] = round(score, 1)
+                    # Validate expected keys are numeric before storing
+                    expected_keys = ("asb", "burglary", "drugs", "violent", "vehicle", "total")
+                    if all(isinstance(crime.get(k, 0), (int, float)) for k in expected_keys):
+                        result["crime_summary"] = json.dumps(crime)
+                        result["crime_data_date"] = crime.get("month")
+                        total = crime.get("total", 0)
+                        score = max(0.0, 100.0 - total * 2)
+                        result["crime_safety_score"] = round(score, 1)
+                    else:
+                        logger.warning(f"Skipping invalid crime data for property {prop.get('id')}: non-numeric values")
 
             # Supermarkets — skip if already populated
             has_supermarket = existing_enrichment and existing_enrichment.get("nearest_supermarket_name")

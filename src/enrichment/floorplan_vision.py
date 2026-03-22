@@ -42,7 +42,7 @@ class FloorplanVisionExtractor:
                 ct = "image/jpeg"
             return base64.standard_b64encode(r.content).decode(), ct
         except Exception as e:
-            logger.debug(f"Failed to fetch floor plan {url}: {e}")
+            logger.debug(f"Failed to fetch floor plan image {url}: {e}")
             return None
 
     def extract_size(self, floorplan_url: str) -> int | None:
@@ -75,7 +75,7 @@ class FloorplanVisionExtractor:
                 if 100 <= val <= 15000:   # sanity range for residential
                     return val
         except Exception as e:
-            logger.debug(f"Vision extraction failed: {e}")
+            logger.debug(f"Vision extraction failed for {floorplan_url}: {e}")
         return None
 
 

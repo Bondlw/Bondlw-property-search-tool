@@ -28,15 +28,19 @@ Property Search Tool/
 ├── scripts/
 │   ├── audit.py                # Report health-check: validates HTML output for issues
 │   ├── diagnostic.py           # Prints qualifying/near-miss breakdown to console
+│   ├── fix_tenure.py           # Re-scrape and correct tenure for freehold+SC anomalies
+│   ├── gate_analysis.py        # Show which gates are filtering out properties
 │   ├── import_rightmove_favourites.py  # Playwright-based import of Rightmove saved properties
 │   ├── scenario_analysis.py    # Deposit/term scenario financial modelling
-│   └── setup_scheduler.ps1     # Windows Task Scheduler setup for daily runs
+│   ├── setup_scheduler.ps1     # Windows Task Scheduler setup for daily runs
+│   └── verify_counts.py        # Quick qualifying vs needs-verification count check
 ├── src/
 │   ├── __main__.py             # Entry point: python -m src <command>
 │   ├── cli.py                  # Click CLI command definitions
 │   ├── config_loader.py        # YAML config loading
 │   ├── enrichment/
-│   │   └── enrichment_service.py   # Crime data, supermarket proximity, commute lookup
+│   │   ├── enrichment_service.py   # Crime data, supermarket proximity, commute lookup
+│   │   └── floorplan_vision.py     # Claude Haiku vision — extract floor area from plan images
 │   ├── filtering/
 │   │   ├── hard_gates.py           # 15+ hard-gate checks (price, lease, EPC, crime, etc.)
 │   │   └── scoring.py              # Multi-factor weighted scoring engine (0–100 points)
@@ -56,9 +60,12 @@ Property Search Tool/
 │   │   └── repository.py           # All CRUD, enrichment, price history, favourites, notes
 │   └── utils/
 │       ├── deduplication.py        # URL normalisation to prevent duplicate inserts
-│       └── financial_calculator.py # Mortgage, monthly cost, affordability rating
+│       ├── financial_calculator.py # Mortgage, monthly cost, affordability rating
+│       └── geo.py                  # Haversine distance calculations (miles and metres)
 └── templates/
-    └── daily_report.html       # Jinja2 HTML report template (dark theme, ~2300 lines)
+    ├── daily_report.html       # Jinja2 HTML report template (dark theme)
+    ├── _styles.html            # Extracted CSS partial (~519 lines)
+    └── _scripts.html           # Extracted JS partial (~1593 lines)
 ```
 
 ---
@@ -210,7 +217,7 @@ webbrowser.open()  →  auto-open in default browser
 
 ## Database Schema
 
-The database lives at `data/property_search.db` (current schema version: 4).
+The database lives at `data/property_search.db` (current schema version: 5).
 
 ### `properties`
 
@@ -335,8 +342,11 @@ Five areas in the primary cluster (all Southeastern mainline):
 | `scripts/audit.py`                       | Parse latest HTML report and flag any template/data issues                   |
 | `scripts/diagnostic.py`                  | Print qualifying/near-miss breakdown to console without regenerating         |
 | `scripts/import_rightmove_favourites.py` | Use Playwright to import Rightmove saved properties as local favourites      |
+| `scripts/fix_tenure.py`                  | Re-scrape freehold properties with service charges to correct tenure         |
+| `scripts/gate_analysis.py`               | Show which hard gates are filtering out the most properties                  |
 | `scripts/scenario_analysis.py`           | Deposit and mortgage term scenario analysis                                  |
 | `scripts/setup_scheduler.ps1`            | Register daily run as Windows Task Scheduler job (`PropertySearch_DailyRun`) |
+| `scripts/verify_counts.py`              | Quick qualifying vs needs-verification count check                           |
 
 ---
 

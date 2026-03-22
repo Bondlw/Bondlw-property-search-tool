@@ -90,6 +90,31 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
             self._handle_add_viewing(body)
             return
 
+        # POST /api/offer — add a new offer
+        if path == "/api/offer":
+            body = self._read_body() or {}
+            self._handle_add_offer(body)
+            return
+
+        # POST /api/offer/<id>/update — update an offer
+        match = re.match(r"^/api/offer/(\d+)/update$", path)
+        if match:
+            body = self._read_body() or {}
+            self._handle_update_offer(int(match.group(1)), body)
+            return
+
+        # POST /api/offer/<id>/delete — delete an offer
+        match = re.match(r"^/api/offer/(\d+)/delete$", path)
+        if match:
+            self._handle_delete_offer(int(match.group(1)))
+            return
+
+        # POST /api/inspection — save a viewing inspection
+        if path == "/api/inspection":
+            body = self._read_body() or {}
+            self._handle_save_inspection(body)
+            return
+
         # PUT /api/viewing/<id> — update a viewing
         match = re.match(r"^/api/viewing/(\d+)$", path)
         if match and self.command == 'POST' and self.headers.get('X-Method') == 'PUT':
@@ -157,6 +182,22 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
             self._handle_all_viewings()
             return
 
+        # GET /api/offers — all offers
+        if path == "/api/offers":
+            self._handle_all_offers()
+            return
+
+        # GET /api/inspections — all inspections
+        if path == "/api/inspections":
+            self._handle_all_inspections()
+            return
+
+        # GET /api/inspection/<viewing_id>
+        match = re.match(r"^/api/inspection/(\d+)$", path)
+        if match:
+            self._handle_get_inspection(int(match.group(1)))
+            return
+
         # GET / — serve latest report
         if path == "/" or path == "":
             self._serve_latest_report()
@@ -165,14 +206,33 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
         # Default: serve static files from report dir
         super().do_GET()
 
+    MAX_BODY_SIZE = 50_000  # 50KB — generous for JSON payloads
+
     def _read_body(self) -> dict | None:
         length = int(self.headers.get("Content-Length", 0))
+        if length > self.MAX_BODY_SIZE:
+            self._json_response(413, {"error": f"Payload too large (max {self.MAX_BODY_SIZE} bytes)"})
+            return None
         if length:
             try:
-                return json.loads(self.rfile.read(length))
-            except (json.JSONDecodeError, ValueError):
-                pass
+                raw = self.rfile.read(length)
+                data = json.loads(raw)
+                if not isinstance(data, dict):
+                    self._json_response(400, {"error": "Request body must be a JSON object"})
+                    return None
+                return data
+            except (json.JSONDecodeError, ValueError) as exc:
+                self._json_response(400, {"error": f"Invalid JSON: {exc}"})
+                return None
         return None
+
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests."""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Method")
+        self.end_headers()
 
     def _json_response(self, status: int, data: dict):
         body = json.dumps(data).encode("utf-8")
@@ -186,12 +246,10 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
     def _handle_favourite(self, prop_id: int):
         with Database(self.db_path) as db:
             repo = PropertyRepository(db)
-            if repo.is_favourite(prop_id):
-                repo.remove_favourite(prop_id)
-                self._json_response(200, {"action": "removed", "id": prop_id})
-            else:
-                repo.add_favourite(prop_id)
-                self._json_response(200, {"action": "added", "id": prop_id})
+            # Atomic toggle: attempt insert, if already exists then remove
+            added = repo.toggle_favourite(prop_id)
+            action = "added" if added else "removed"
+            self._json_response(200, {"action": action, "id": prop_id})
 
     def _handle_unfavourite(self, prop_id: int):
         with Database(self.db_path) as db:
@@ -231,6 +289,9 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
             })
 
     def _handle_save_note(self, prop_id: int, text: str):
+        if len(text) > 5000:
+            self._json_response(400, {"error": "Note text too long (max 5000 chars)"})
+            return
         with Database(self.db_path) as db:
             repo = PropertyRepository(db)
             repo.save_note(prop_id, text)
@@ -275,6 +336,18 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
         except (KeyError, ValueError):
             self._json_response(400, {"error": "property_id and viewing_date required"})
             return
+
+        # Validate date format (YYYY-MM-DD)
+        try:
+            from datetime import date as date_cls
+            parsed_date = date_cls.fromisoformat(viewing_date)
+            if parsed_date < date_cls.today():
+                self._json_response(400, {"error": "Viewing date cannot be in the past"})
+                return
+        except ValueError:
+            self._json_response(400, {"error": "Invalid date format — use YYYY-MM-DD"})
+            return
+
         with Database(self.db_path) as db:
             repo = PropertyRepository(db)
             vid = repo.add_viewing(prop_id, viewing_date, viewing_time, notes)
@@ -307,6 +380,84 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
         with Database(self.db_path) as db:
             repo = PropertyRepository(db)
             self._json_response(200, {"viewings": repo.get_all_viewings()})
+
+    # --- Offers ---
+
+    def _handle_add_offer(self, body: dict):
+        try:
+            prop_id = int(body["property_id"])
+            amount = int(body["amount"])
+            offer_date = body.get("offer_date", "")
+        except (KeyError, ValueError, TypeError):
+            self._json_response(400, {"error": "property_id and amount required"})
+            return
+        if not offer_date:
+            from datetime import date as date_cls
+            offer_date = date_cls.today().isoformat()
+        status = body.get("status", "pending")
+        valid_statuses = {"pending", "accepted", "rejected", "withdrawn", "countered"}
+        if status not in valid_statuses:
+            self._json_response(400, {"error": f"Invalid status. Must be one of: {', '.join(sorted(valid_statuses))}"})
+            return
+        notes = body.get("notes", "")
+        with Database(self.db_path) as db:
+            repo = PropertyRepository(db)
+            oid = repo.add_offer(prop_id, amount, offer_date, status, notes)
+            self._json_response(200, {"action": "added", "id": oid})
+
+    def _handle_update_offer(self, offer_id: int, body: dict):
+        try:
+            amount = int(body["amount"])
+            offer_date = body["offer_date"]
+            status = body["status"]
+        except (KeyError, ValueError, TypeError):
+            self._json_response(400, {"error": "amount, offer_date, and status required"})
+            return
+        valid_statuses = {"pending", "accepted", "rejected", "withdrawn", "countered"}
+        if status not in valid_statuses:
+            self._json_response(400, {"error": f"Invalid status"})
+            return
+        notes = body.get("notes", "")
+        with Database(self.db_path) as db:
+            repo = PropertyRepository(db)
+            repo.update_offer(offer_id, amount, offer_date, status, notes)
+            self._json_response(200, {"action": "updated", "id": offer_id})
+
+    def _handle_delete_offer(self, offer_id: int):
+        with Database(self.db_path) as db:
+            repo = PropertyRepository(db)
+            repo.delete_offer(offer_id)
+            self._json_response(200, {"action": "deleted", "id": offer_id})
+
+    def _handle_all_offers(self):
+        with Database(self.db_path) as db:
+            repo = PropertyRepository(db)
+            self._json_response(200, {"offers": repo.get_all_offers()})
+
+    # --- Inspections ---
+
+    def _handle_save_inspection(self, body: dict):
+        try:
+            viewing_id = int(body["viewing_id"])
+            property_id = int(body["property_id"])
+        except (KeyError, ValueError, TypeError):
+            self._json_response(400, {"error": "viewing_id and property_id required"})
+            return
+        with Database(self.db_path) as db:
+            repo = PropertyRepository(db)
+            iid = repo.save_inspection(viewing_id, property_id, body)
+            self._json_response(200, {"action": "saved", "id": iid})
+
+    def _handle_get_inspection(self, viewing_id: int):
+        with Database(self.db_path) as db:
+            repo = PropertyRepository(db)
+            inspection = repo.get_inspection(viewing_id)
+            self._json_response(200, {"inspection": inspection})
+
+    def _handle_all_inspections(self):
+        with Database(self.db_path) as db:
+            repo = PropertyRepository(db)
+            self._json_response(200, {"inspections": repo.get_all_inspections()})
 
     # --- Enquiry autofill ---
 
@@ -393,7 +544,7 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
                         # CSS escaping: phone.number -> phone\\.number
                         try:
                             page.fill("#phone\\.number", phone)
-                        except Exception:
+                        except (TimeoutError, ValueError):
                             page.evaluate(f"el = document.querySelector('[name=\"phone.number\"]'); if(el) el.value = {phone!r}")
                     if postcode:
                         page.fill("#postcode", postcode)
@@ -408,7 +559,7 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
                     page.evaluate("window.focus()")
                     # Keep browser open until user closes it (max 5 min)
                     page.wait_for_event("close", timeout=300_000)
-            except Exception as exc:
+            except (OSError, RuntimeError) as exc:
                 logger.warning(f"Enquiry autofill failed: {exc}")
 
         threading.Thread(target=_fill, daemon=True).start()
@@ -430,14 +581,11 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
                 repo = PropertyRepository(db)
                 properties = repo.get_active_properties()
                 enrichment_map = {}
-                price_history_map = {}
+                price_history_map = repo.get_all_price_histories()
                 for prop in properties:
                     e = repo.get_enrichment(prop["id"])
                     if e:
                         enrichment_map[prop["id"]] = e
-                    ph = repo.get_price_history(prop["id"])
-                    if ph:
-                        price_history_map[prop["id"]] = ph
                 fav_ids = repo.get_favourite_ids()
                 excl_ids = repo.get_excluded_ids()
 
@@ -495,8 +643,8 @@ def start_server(port: int = 8765, report_dir: str = "output/reports", db_path: 
     try:
         import webbrowser
         webbrowser.open(f"http://localhost:{port}")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to open browser: %s", exc)
 
     try:
         server.serve_forever()

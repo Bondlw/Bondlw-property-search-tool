@@ -11,6 +11,7 @@ from jinja2 import Environment, FileSystemLoader
 from ..filtering.hard_gates import check_all_gates
 from ..filtering.scoring import score_property
 from ..utils.financial_calculator import FinancialCalculator
+from ..utils.geo import haversine_miles
 
 logger = logging.getLogger(__name__)
 
@@ -50,24 +51,14 @@ class ReportGenerator:
         """Return (name, distance_miles) of the nearest configured search area."""
         best_name, best_dist = "Unknown", float("inf")
         for name, a_lat, a_lng in self._area_list:
-            dlat = math.radians(a_lat - lat)
-            dlng = math.radians(a_lng - lng)
-            a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat)) * math.cos(math.radians(a_lat)) * math.sin(dlng / 2) ** 2
-            dist = 2 * math.asin(math.sqrt(a))
+            dist = haversine_miles(lat, lng, a_lat, a_lng)
             if dist < best_dist:
                 best_dist, best_name = dist, name
-        # Convert radians distance to miles (Earth radius ~3959 mi)
-        best_miles = best_dist * 3959
-        return best_name, best_miles
+        return best_name, best_dist
     @staticmethod
     def _haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
         """Straight-line distance in miles between two lat/lng points."""
-        dlat = math.radians(lat2 - lat1)
-        dlng = math.radians(lng2 - lng1)
-        a = (math.sin(dlat / 2) ** 2
-             + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
-             * math.sin(dlng / 2) ** 2)
-        return round(2 * math.asin(math.sqrt(a)) * 3959, 1)
+        return haversine_miles(lat1, lng1, lat2, lng2)
 
         # Exposed after generate() for use by caller
         self.last_qualifying: list[dict] = []
@@ -123,6 +114,19 @@ class ReportGenerator:
             prop["_rooms"] = json.loads(rooms_raw) if rooms_raw else []
 
             enrichment = (enrichment_map or {}).get(prop_id) or prop.get("_enrichment")
+
+            # Set defaults for enrichment-dependent fields (avoids template errors when no enrichment)
+            prop.setdefault("_nearest_station", None)
+            prop.setdefault("_station_walk_min", None)
+            prop.setdefault("_commute_london_min", None)
+            prop.setdefault("_commute_maidstone_min", None)
+            prop.setdefault("_annual_season_ticket", None)
+            prop.setdefault("_flood_zone", None)
+            prop.setdefault("_broadband_speed", None)
+            prop.setdefault("_supermarket_name", None)
+            prop.setdefault("_supermarket_walk_min", None)
+            prop.setdefault("_avg_sold_price", None)
+
             passed, gate_results = check_all_gates(prop, enrichment, self.config)
 
             failed_gates = [g for g in gate_results if not g.passed]
@@ -165,9 +169,22 @@ class ReportGenerator:
                 prop["_supermarket_walk_min"] = enrichment.get("nearest_supermarket_walk_min")
                 prop["_avg_sold_price"] = enrichment.get("avg_sold_price_nearby")
 
-            # Size and price-per-sqft
+            # Size: use DB value, or fall back to room dimensions total
             size = prop.get("size_sqft")
+            parsed_rooms = prop.get("_rooms", [])
+
+            if not size and parsed_rooms:
+                total_sqm = sum(
+                    float(r.get("width", 0) or 0) * float(r.get("length", 0) or 0)
+                    for r in parsed_rooms
+                    if isinstance(r, dict) and r.get("width") and r.get("length")
+                )
+                if total_sqm > 0:
+                    size = int(total_sqm * 10.764)
+                    prop["_size_from_rooms"] = True
+
             prop["_size_sqft"] = size
+            prop["_size_sqm"] = round(size / 10.764) if size else None
             prop["_price_per_sqft"] = round(prop["price"] / size) if size else None
 
             # Office distance (miles, straight-line)
@@ -263,7 +280,7 @@ class ReportGenerator:
             # and asking price is amber (not deeply red)
             if not passed:
                 monthly = prop["_costs"]["total_monthly"]
-                monthly_max = self.config.get("monthly_target", {}).get("max", 928)
+                monthly_max = self.config.get("monthly_target", {}).get("max", 889)
                 stretch_ceiling = calc.take_home * 0.40
                 neg = prop.get("_negotiation")
                 offer_qualifies = neg and neg.get("would_qualify")
@@ -288,12 +305,12 @@ class ReportGenerator:
                 and len(non_affordability_fails) == 0
             )
             if passed or is_negotiation_candidate:
-                if days and days >= 30:
+                if neg:
                     negotiation.append(prop)
 
         # Sort sections: new items first, then by score/failed count
-        qualifying.sort(key=lambda p: (not p.get("_is_new"), -(p.get("_scores") or {}).get("total", 0)))
-        needs_verification.sort(key=lambda p: (not p.get("_is_new"), -(p.get("_scores") or {}).get("total", 0)))
+        qualifying.sort(key=lambda p: (not p.get("_is_new"), -(p.get("_scores") or {}).get("total", 0), p.get("_price_per_sqft") or 9999))
+        needs_verification.sort(key=lambda p: (not p.get("_is_new"), -(p.get("_scores") or {}).get("total", 0), p.get("_price_per_sqft") or 9999))
         stretch.sort(key=lambda p: (not p.get("_is_new"), p.get("_stretch_monthly", 9999)))
 
         # Deduplicate negotiation list
@@ -417,23 +434,11 @@ class ReportGenerator:
         except (ValueError, TypeError):
             return None
 
-    def _get_budget_max(self, prop: dict) -> int | None:
-        tenure = (prop.get("tenure") or "").lower()
-        budget = self.config.get("budget", {})
-        if tenure == "freehold":
-            return budget.get("freehold", {}).get("absolute_max", 200000)
-        if tenure in ("leasehold", "share_of_freehold"):
-            return budget.get("leasehold", {}).get("absolute_max", 180000)
-        return None
-
     def _compute_recommended_offer(self, prop: dict, days: int | None, calc) -> dict | None:
-        """Compute a recommended offer price based on price history and days on market.
+        """Compute a recommended offer price using shared discount signals plus
+        price history context.
 
-        Strategy:
-        - Base discount from days on market (5-10%)
-        - Extra discount if price has already been reduced (seller motivated)
-        - Offer floored at total reduction seen so far (match their trajectory)
-        - All-in monthly at the offer price for affordability check
+        Always returns a result (2% baseline for new listings with no signals).
         """
         price = prop.get("price", 0)
         if not price:
@@ -445,64 +450,42 @@ class ReportGenerator:
         original_price = price
         total_reduction = 0
         total_reduction_pct = 0.0
-        reductions_count = 0
 
         if history:
             original_price = history[0].get("price", price) if isinstance(history[0], dict) else price
-            for entry in history:
-                change = entry.get("change_amount", 0) if isinstance(entry, dict) else 0
-                if change and change < 0:
-                    reductions_count += 1
             if original_price and original_price != price:
                 total_reduction = original_price - price
                 total_reduction_pct = round((total_reduction / original_price) * 100, 1)
 
-        # Base discount from days on market
-        if days and days >= 90:
-            dom_discount_pct = 10
-        elif days and days >= 60:
-            dom_discount_pct = 8
-        elif days and days >= 30:
-            dom_discount_pct = 5
-        else:
-            dom_discount_pct = 3  # Even new listings: always room to negotiate
+        # Use shared discount logic
+        signals, suggested_discount_pct = calc._calculate_discount_signals(
+            days,
+            prop.get("lease_years"),
+            history,
+        )
 
-        # If already reduced, seller is motivated — push further
-        if reductions_count >= 2:
-            extra_pct = 3  # Multiple reductions = very motivated
-        elif reductions_count == 1:
-            extra_pct = 2
-        else:
-            extra_pct = 0
-
-        # Total suggested discount (from current price, not original)
-        suggested_discount_pct = dom_discount_pct + extra_pct
+        # Baseline: even with no signals, recommend a 2% opening offer
+        if not signals:
+            suggested_discount_pct = 2
 
         # Calculate offer
         offer_price = round(price * (1 - suggested_discount_pct / 100) / 1000) * 1000
+        saving = price - offer_price
 
         # Calculate all-in at offer price
         offer_prop = {**prop, "price": offer_price}
         offer_costs = calc.calculate_full_monthly_cost(offer_prop)
 
-        reasoning = []
-        reasoning.append(f"{dom_discount_pct}% for {days or 0}d on market")
-        if extra_pct:
-            reasoning.append(f"+{extra_pct}% ({reductions_count} price cut{'s' if reductions_count > 1 else ''})")
-        if total_reduction > 0:
-            reasoning.append(f"Already down £{total_reduction:,} ({total_reduction_pct}%) from £{original_price:,}")
-
         return {
             "offer_price": offer_price,
             "discount_pct": suggested_discount_pct,
-            "saving": price - offer_price,
+            "saving": saving,
+            "signals": signals,
             "offer_all_in_monthly": offer_costs["total_all_in_monthly"],
             "offer_affordability": offer_costs["affordability_rating"],
             "original_price": original_price if original_price != price else None,
             "total_reduction": total_reduction,
             "total_reduction_pct": total_reduction_pct,
-            "reductions_count": reductions_count,
-            "reasoning": reasoning,
         }
 
     def _compute_deposit_recommendation(self, prop: dict, calc) -> dict:
@@ -517,7 +500,7 @@ class ReportGenerator:
 
         total_savings = self.config["user"].get("total_savings", calc.deposit)
         emergency_target = self.config["user"].get("emergency_fund_target", 5000)
-        bills = self.config.get("estimated_bills", {}).get("total_monthly", 211)
+        bills = self.config.get("estimated_bills", {}).get("total_monthly", 198)
         green_ceiling = calc.monthly_target_min + bills
         amber_ceiling = calc.monthly_target_max + bills
 

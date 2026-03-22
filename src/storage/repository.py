@@ -1,11 +1,15 @@
 """CRUD operations for the property search database."""
 
 import json
+import logging
+import sqlite3
 from datetime import date, datetime
 from typing import Optional
 
 from .database import Database
 from .models import Property, RawListing
+
+logger = logging.getLogger(__name__)
 
 
 class PropertyRepository:
@@ -33,55 +37,59 @@ class PropertyRepository:
     def insert_property(self, listing: RawListing, url_normalised: str) -> int:
         """Insert a new property. Returns the new property ID."""
         today = date.today().isoformat()
-        cursor = self.db.conn.execute(
-            """INSERT INTO properties (
-                portal, portal_id, url, url_normalised, title, price,
-                address, postcode, property_type, bedrooms, bathrooms,
-                tenure, lease_years, service_charge_pa, ground_rent_pa,
-                council_tax_band, epc_rating, description, key_features,
-                agent_name, latitude, longitude, images,
-                first_seen_date, last_seen_date, first_listed_date,
-                is_active, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active')""",
-            (
-                listing.portal,
-                listing.portal_id,
-                listing.url,
-                url_normalised,
-                listing.title,
-                listing.price,
-                listing.address,
-                listing.postcode,
-                listing.property_type,
-                listing.bedrooms,
-                listing.bathrooms,
-                listing.tenure,
-                listing.lease_years,
-                listing.service_charge_pa,
-                listing.ground_rent_pa,
-                listing.council_tax_band,
-                listing.epc_rating,
-                listing.description,
-                json.dumps(listing.key_features),
-                listing.agent_name,
-                listing.latitude,
-                listing.longitude,
-                json.dumps(listing.images) if listing.images else None,
-                today,
-                today,
-                listing.first_listed_date,
-            ),
-        )
-        prop_id = cursor.lastrowid
+        try:
+            cursor = self.db.conn.execute(
+                """INSERT INTO properties (
+                    portal, portal_id, url, url_normalised, title, price,
+                    address, postcode, property_type, bedrooms, bathrooms,
+                    tenure, lease_years, service_charge_pa, ground_rent_pa,
+                    council_tax_band, epc_rating, description, key_features,
+                    agent_name, latitude, longitude, images,
+                    first_seen_date, last_seen_date, first_listed_date,
+                    is_active, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active')""",
+                (
+                    listing.portal,
+                    listing.portal_id,
+                    listing.url,
+                    url_normalised,
+                    listing.title,
+                    listing.price,
+                    listing.address,
+                    listing.postcode,
+                    listing.property_type,
+                    listing.bedrooms,
+                    listing.bathrooms,
+                    listing.tenure,
+                    listing.lease_years,
+                    listing.service_charge_pa,
+                    listing.ground_rent_pa,
+                    listing.council_tax_band,
+                    listing.epc_rating,
+                    listing.description,
+                    json.dumps(listing.key_features),
+                    listing.agent_name,
+                    listing.latitude,
+                    listing.longitude,
+                    json.dumps(listing.images) if listing.images else None,
+                    today,
+                    today,
+                    listing.first_listed_date,
+                ),
+            )
+            prop_id = cursor.lastrowid
 
-        # Record initial price in history — use portal listing date if available
-        self.db.conn.execute(
-            """INSERT INTO price_history (property_id, price, recorded_date)
-               VALUES (?, ?, ?)""",
-            (prop_id, listing.price, listing.first_listed_date or today),
-        )
-        self.db.conn.commit()
-        return prop_id
+            # Record initial price in history — use portal listing date if available
+            self.db.conn.execute(
+                """INSERT INTO price_history (property_id, price, recorded_date)
+                   VALUES (?, ?, ?)""",
+                (prop_id, listing.price, listing.first_listed_date or today),
+            )
+            self.db.conn.commit()
+            return prop_id
+        except sqlite3.Error:
+            self.db.conn.rollback()
+            raise
 
     def update_property(self, prop_id: int, listing: RawListing) -> bool:
         """Update existing property from search results.
@@ -98,33 +106,37 @@ class PropertyRepository:
 
         price_changed = old is not None and old["price"] != listing.price
 
-        price_reduced = 0
-        if price_changed and old is not None:
-            price_reduced = 1 if listing.price < old["price"] else 0
+        try:
+            price_reduced = 0
+            if price_changed and old is not None:
+                price_reduced = 1 if listing.price < old["price"] else 0
 
-        self.db.conn.execute(
-            """UPDATE properties SET
-                price = ?,
-                last_seen_date = ?,
-                is_active = 1,
-                status = 'active',
-                price_reduced = ?,
-                updated_at = datetime('now')
-            WHERE id = ?""",
-            (listing.price, today, price_reduced, prop_id),
-        )
-
-        if price_changed and old is not None:
-            change = listing.price - old["price"]
-            change_pct = (change / old["price"]) * 100 if old["price"] > 0 else 0
             self.db.conn.execute(
-                """INSERT INTO price_history
-                   (property_id, price, recorded_date, change_amount, change_pct)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (prop_id, listing.price, today, change, round(change_pct, 2)),
+                """UPDATE properties SET
+                    price = ?,
+                    last_seen_date = ?,
+                    is_active = 1,
+                    status = 'active',
+                    price_reduced = ?,
+                    updated_at = datetime('now')
+                WHERE id = ?""",
+                (listing.price, today, price_reduced, prop_id),
             )
 
-        self.db.conn.commit()
+            if price_changed and old is not None:
+                change = listing.price - old["price"]
+                change_pct = (change / old["price"]) * 100 if old["price"] > 0 else 0
+                self.db.conn.execute(
+                    """INSERT INTO price_history
+                       (property_id, price, recorded_date, change_amount, change_pct)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (prop_id, listing.price, today, change, round(change_pct, 2)),
+                )
+
+            self.db.conn.commit()
+        except sqlite3.Error:
+            self.db.conn.rollback()
+            raise
         return price_changed
 
     def update_property_details(self, prop_id: int, listing: RawListing) -> None:
@@ -261,8 +273,8 @@ class PropertyRepository:
                     continue
                 c_lat, c_lng = c["latitude"], c["longitude"]
                 if c_lat and c_lng:
-                    # ~50m threshold: 0.0005 degrees ≈ 55m at UK latitudes
-                    if abs(c_lat - lat) < 0.0005 and abs(c_lng - lng) < 0.0005:
+                    # ~100m threshold: 0.001 degrees ≈ 111m at UK latitudes
+                    if abs(c_lat - lat) < 0.001 and abs(c_lng - lng) < 0.001:
                         related_ids.append(c["id"])
         else:
             # No coordinates — fall back to just street match (less reliable)
@@ -308,6 +320,115 @@ class PropertyRepository:
                 ) if prev_price else None
 
         return merged
+
+    def get_all_price_histories(self) -> dict[int, list[dict]]:
+        """Batch-load all price history keyed by property_id.
+
+        Uses two queries instead of N×3 per property. Cross-listing merge
+        is handled by grouping properties that share the same street + coords.
+        """
+        # 1) Load all price history rows in one query
+        rows = self.db.conn.execute(
+            """SELECT ph.*, p.first_listed_date, p.address, p.latitude, p.longitude
+               FROM price_history ph
+               JOIN properties p ON p.id = ph.property_id
+               ORDER BY ph.property_id, COALESCE(p.first_listed_date, ph.recorded_date), ph.recorded_date"""
+        ).fetchall()
+
+        # Group raw rows by property_id
+        raw_by_prop: dict[int, list[dict]] = {}
+        for row in rows:
+            prop_id = row["property_id"]
+            raw_by_prop.setdefault(prop_id, []).append(dict(row))
+
+        # 2) Build cross-listing clusters (same street + nearby coords)
+        props_for_clustering = self.db.conn.execute(
+            """SELECT id, address, latitude, longitude FROM properties
+               WHERE id IN (SELECT DISTINCT property_id FROM price_history)"""
+        ).fetchall()
+
+        # Map each property to a cluster key
+        clusters: dict[int, list[int]] = {}  # cluster_lead_id -> [member_ids]
+        assigned: dict[int, int] = {}  # prop_id -> cluster_lead_id
+
+        for prop in props_for_clustering:
+            pid = prop["id"]
+            if pid in assigned:
+                continue
+            address = (prop["address"] or "").strip()
+            street = address.split(",")[0].strip().lower()
+            lat, lng = prop["latitude"], prop["longitude"]
+            cluster_members = [pid]
+            assigned[pid] = pid
+
+            if len(street) >= 5 and lat and lng:
+                for other in props_for_clustering:
+                    oid = other["id"]
+                    if oid == pid or oid in assigned:
+                        continue
+                    other_address = (other["address"] or "").strip()
+                    other_street = other_address.split(",")[0].strip().lower()
+                    if other_street != street:
+                        continue
+                    o_lat, o_lng = other["latitude"], other["longitude"]
+                    if o_lat and o_lng:
+                        if abs(o_lat - lat) < 0.001 and abs(o_lng - lng) < 0.001:
+                            cluster_members.append(oid)
+                            assigned[oid] = pid
+
+            clusters[pid] = cluster_members
+
+        # 3) Build merged price history per property
+        result: dict[int, list[dict]] = {}
+
+        for lead_id, member_ids in clusters.items():
+            if len(member_ids) <= 1:
+                history = raw_by_prop.get(lead_id, [])
+            else:
+                # Merge all members' histories
+                combined = []
+                for mid in member_ids:
+                    combined.extend(raw_by_prop.get(mid, []))
+                combined.sort(
+                    key=lambda r: (
+                        r.get("first_listed_date") or r["recorded_date"],
+                        r["recorded_date"],
+                        r["price"],
+                    )
+                )
+                # Deduplicate consecutive same-price entries
+                history = []
+                last_price = None
+                for entry in combined:
+                    if entry["price"] == last_price:
+                        continue
+                    history.append(entry)
+                    last_price = entry["price"]
+
+            # Recalculate change amounts
+            for i, entry in enumerate(history):
+                if i == 0:
+                    entry["change_amount"] = None
+                    entry["change_pct"] = None
+                else:
+                    prev_price = history[i - 1]["price"]
+                    entry["change_amount"] = entry["price"] - prev_price
+                    entry["change_pct"] = (
+                        round((entry["change_amount"] / prev_price) * 100, 2)
+                        if prev_price
+                        else None
+                    )
+
+            # Assign merged history to all cluster members
+            for mid in member_ids:
+                result[mid] = history
+
+        # Also include any properties not in clusters (shouldn't happen, but safe)
+        for pid in raw_by_prop:
+            if pid not in result:
+                result[pid] = raw_by_prop[pid]
+
+        return result
 
     def get_reduced_properties(self) -> list[dict]:
         """Get properties that have had price reductions."""
@@ -480,6 +601,22 @@ class PropertyRepository:
 
     # --- Favourites ---
 
+    def toggle_favourite(self, property_id: int) -> bool:
+        """Atomically toggle favourite status. Returns True if added, False if removed."""
+        cursor = self.db.conn.execute(
+            "INSERT OR IGNORE INTO favourites (property_id, notes) VALUES (?, '')",
+            (property_id,),
+        )
+        if cursor.rowcount > 0:
+            self.db.conn.commit()
+            return True
+        # Already existed — remove it
+        self.db.conn.execute(
+            "DELETE FROM favourites WHERE property_id = ?", (property_id,),
+        )
+        self.db.conn.commit()
+        return False
+
     def add_favourite(self, property_id: int, notes: str = "") -> bool:
         """Add property to favourites. Returns True if added, False if already exists."""
         try:
@@ -489,7 +626,8 @@ class PropertyRepository:
             )
             self.db.conn.commit()
             return self.db.conn.total_changes > 0
-        except Exception:
+        except sqlite3.Error as exc:
+            logger.error(f"Failed to add favourite for property {property_id}: {exc}")
             return False
 
     def remove_favourite(self, property_id: int) -> bool:
@@ -532,7 +670,8 @@ class PropertyRepository:
             )
             self.db.conn.commit()
             return self.db.conn.total_changes > 0
-        except Exception:
+        except sqlite3.Error as exc:
+            logger.error(f"Failed to exclude property {property_id}: {exc}")
             return False
 
     def unexclude_property(self, property_id: int) -> bool:
@@ -649,3 +788,82 @@ class PropertyRepository:
     def get_viewing(self, viewing_id: int) -> dict | None:
         row = self.db.conn.execute("SELECT * FROM viewings WHERE id=?", (viewing_id,)).fetchone()
         return dict(row) if row else None
+
+    # --- Offers ---
+
+    def add_offer(self, property_id: int, amount: int, offer_date: str, status: str = "pending", notes: str = "") -> int:
+        cur = self.db.conn.execute(
+            """INSERT INTO offers (property_id, amount, offer_date, status, notes)
+               VALUES (?, ?, ?, ?, ?)""",
+            (property_id, amount, offer_date, status, notes),
+        )
+        self.db.conn.commit()
+        return cur.lastrowid
+
+    def update_offer(self, offer_id: int, amount: int, offer_date: str, status: str, notes: str) -> None:
+        self.db.conn.execute(
+            """UPDATE offers SET amount=?, offer_date=?, status=?, notes=?, updated_at=datetime('now')
+               WHERE id=?""",
+            (amount, offer_date, status, notes, offer_id),
+        )
+        self.db.conn.commit()
+
+    def delete_offer(self, offer_id: int) -> None:
+        self.db.conn.execute("DELETE FROM offers WHERE id=?", (offer_id,))
+        self.db.conn.commit()
+
+    def get_all_offers(self) -> list[dict]:
+        rows = self.db.conn.execute(
+            """SELECT o.id, o.property_id, o.amount, o.offer_date, o.status, o.notes,
+                      p.address, p.price, p.agent_name, p.url
+               FROM offers o
+               JOIN properties p ON p.id = o.property_id
+               ORDER BY o.offer_date DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_offers_for_property(self, property_id: int) -> list[dict]:
+        rows = self.db.conn.execute(
+            "SELECT * FROM offers WHERE property_id=? ORDER BY offer_date DESC",
+            (property_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Viewing Inspections ---
+
+    def save_inspection(self, viewing_id: int, property_id: int, data: dict) -> int:
+        cur = self.db.conn.execute(
+            """INSERT OR REPLACE INTO viewing_inspections
+               (viewing_id, property_id, condition_score, light_score, noise_score,
+                parking, storage, pros, cons, would_offer, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            (
+                viewing_id, property_id,
+                data.get("condition_score", 0),
+                data.get("light_score", 0),
+                data.get("noise_score", 0),
+                data.get("parking", ""),
+                data.get("storage", ""),
+                data.get("pros", ""),
+                data.get("cons", ""),
+                1 if data.get("would_offer") else 0,
+            ),
+        )
+        self.db.conn.commit()
+        return cur.lastrowid
+
+    def get_inspection(self, viewing_id: int) -> dict | None:
+        row = self.db.conn.execute(
+            "SELECT * FROM viewing_inspections WHERE viewing_id=?", (viewing_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_all_inspections(self) -> list[dict]:
+        rows = self.db.conn.execute(
+            """SELECT vi.*, v.viewing_date, v.viewing_time, p.address
+               FROM viewing_inspections vi
+               JOIN viewings v ON v.id = vi.viewing_id
+               JOIN properties p ON p.id = vi.property_id
+               ORDER BY v.viewing_date DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]

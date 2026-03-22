@@ -99,7 +99,7 @@ class Notifier:
             logger.info(f"Email sent to {self.email_to}: {subject}")
             return True
         except Exception as e:
-            logger.error(f"Email failed: {e}")
+            logger.error(f"Email failed to {self.email_to}: {e}", exc_info=True)
             return False
 
     def notify(

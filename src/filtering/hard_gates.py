@@ -86,79 +86,71 @@ def _estimate_monthly_housing(prop: dict, config: dict) -> float | None:
 
 
 def check_price_cap(prop: dict, enrichment: dict | None, config: dict) -> GateResult:
-    """Check price is within budget caps (tenure-specific).
+    """Check price is within the dynamically calculated affordability ceiling.
 
-    Between responsible_max and absolute_max, also checks that total monthly
-    housing cost stays within the AMBER threshold (monthly_target.max).
+    Instead of hard-coded budget caps, this derives the max price from the
+    monthly affordability rule (housing ≤ monthly_target.max) after accounting
+    for the property's actual service charge, ground rent, and council tax.
     """
+    from ..utils.financial_calculator import FinancialCalculator
+
     price = prop.get("price", 0)
     tenure = _get_tenure(prop)
     budget = config.get("budget", {})
-    monthly_max = config.get("monthly_target", {}).get("max", 928)
 
-    # Check minimum price across all tenures
-    min_prices = [
-        budget.get("freehold", {}).get("ideal_min", 0),
-        budget.get("leasehold", {}).get("ideal_min", 0),
-    ]
-    price_floor = min(p for p in min_prices if p > 0) if any(p > 0 for p in min_prices) else 0
+    # Check minimum price — tenure-aware since leaseholds have lower floors
+    if tenure == "freehold":
+        price_floor = budget.get("freehold", {}).get("ideal_min", 0)
+    elif tenure in ("leasehold", "share_of_freehold"):
+        price_floor = budget.get("leasehold", {}).get("ideal_min", 0)
+    else:
+        price_floor = 0
+
     if price_floor and price < price_floor:
         return GateResult("price_cap", False, f"£{price:,} below minimum £{price_floor:,}")
 
     if not tenure:
         return GateResult("price_cap", False, "Tenure unknown — cannot determine budget cap")
 
-    if tenure == "freehold":
-        caps = budget.get("freehold", {})
-        responsible_max = caps.get("responsible_max", 190000)
-        absolute_max = caps.get("absolute_max", 200000)
+    calc = FinancialCalculator(config)
 
-        if price > absolute_max:
-            return GateResult("price_cap", False, f"£{price:,} exceeds freehold cap £{absolute_max:,}")
+    service_charge_pa = prop.get("service_charge_pa") or 0
+    ground_rent_pa = prop.get("ground_rent_pa") or 0
 
-        # Between responsible and absolute: check monthly cost
-        if price > responsible_max:
-            monthly = _estimate_monthly_housing(prop, config)
-            if monthly and monthly > monthly_max:
-                return GateResult(
-                    "price_cap", False,
-                    f"£{price:,} above £{responsible_max:,} and £{monthly:,.0f}/mo > £{monthly_max}/mo target"
-                )
+    # Get council tax monthly from property data or estimate
+    ct_monthly, _ = calc._get_ct_monthly(prop)
 
-        return GateResult("price_cap", True, f"£{price:,} within freehold cap £{absolute_max:,}")
+    dynamic_cap = calc.get_dynamic_price_cap(
+        service_charge_pa=service_charge_pa,
+        ground_rent_pa=ground_rent_pa,
+        council_tax_monthly=ct_monthly,
+    )
 
-    if tenure in ("leasehold", "share_of_freehold"):
-        caps = budget.get("leasehold", {})
-        responsible_max = caps.get("responsible_max", 170000)
-        absolute_max = caps.get("absolute_max", 180000)
-        sc_cap = caps.get("service_charge_cap_for_absolute_max", 900)
+    if dynamic_cap <= 0:
+        return GateResult(
+            "price_cap", False,
+            f"Cannot afford: service charges too high "
+            f"(SC £{service_charge_pa:,}/yr, GR £{ground_rent_pa:,}/yr, CT £{ct_monthly:.0f}/mo)"
+        )
 
-        if price > absolute_max:
-            return GateResult("price_cap", False, f"£{price:,} exceeds leasehold cap £{absolute_max:,}")
+    if price > dynamic_cap:
+        return GateResult(
+            "price_cap", False,
+            f"£{price:,} exceeds £{dynamic_cap:,} affordability cap "
+            f"(SC £{service_charge_pa:,}/yr, GR £{ground_rent_pa:,}/yr, CT £{ct_monthly:.0f}/mo)"
+        )
 
-        sc = prop.get("service_charge_pa")
-        if price > responsible_max:
-            if sc is None:
-                return GateResult(
-                    "price_cap", False,
-                    f"£{price:,} above £{responsible_max:,} but SC unknown"
-                )
-            if sc >= sc_cap:
-                return GateResult(
-                    "price_cap", False,
-                    f"£{price:,} above £{responsible_max:,} requires SC < £{sc_cap}, but SC is £{sc}"
-                )
-            # Also check monthly cost
-            monthly = _estimate_monthly_housing(prop, config)
-            if monthly and monthly > monthly_max:
-                return GateResult(
-                    "price_cap", False,
-                    f"£{price:,} above £{responsible_max:,} and £{monthly:,.0f}/mo > £{monthly_max}/mo target"
-                )
+    # Determine rating tier for context
+    green_cap = calc.calculate_max_price(service_charge_pa, ground_rent_pa, ct_monthly)["tiers"]["green"]["max_price"]
+    if price <= green_cap:
+        label = "GREEN comfortable"
+    else:
+        label = "AMBER qualifying"
 
-        return GateResult("price_cap", True, f"£{price:,} within leasehold budget")
-
-    return GateResult("price_cap", False, f"Unknown tenure: {tenure}")
+    return GateResult(
+        "price_cap", True,
+        f"£{price:,} within £{dynamic_cap:,} cap ({label})"
+    )
 
 
 def check_monthly_cost(prop: dict, enrichment: dict | None, config: dict) -> GateResult:
@@ -318,9 +310,15 @@ def check_lease_length(prop: dict, enrichment: dict | None, config: dict) -> Gat
 
     Share of freehold has a lower minimum because extending is cheap
     (~£1k admin/legal) since you collectively own the freehold.
-    Pure leasehold requires 120yr+ to stay well above the 80yr
-    marriage value cliff where extension costs skyrocket.
+
+    Pure leasehold under 120yr: estimate the statutory extension cost
+    and check if (price + extension cost) is still within the dynamic
+    affordability cap.  If yes, pass with a note about the extra cost.
+    Hard-reject below the absolute minimum (default 80yr) where marriage
+    value makes extension prohibitively expensive.
     """
+    from ..utils.financial_calculator import FinancialCalculator
+
     tenure = _get_tenure(prop)
 
     if tenure == "freehold":
@@ -337,14 +335,55 @@ def check_lease_length(prop: dict, enrichment: dict | None, config: dict) -> Gat
         return GateResult("lease_length", True, f"SOF lease {lease_years}yr (extension ~£1k)")
 
     if tenure == "leasehold":
-        min_years = config.get("hard_gates", {}).get("lease_minimum_years", 120)
+        preferred_years = config.get("hard_gates", {}).get("lease_minimum_years", 120)
+        absolute_min_years = config.get("hard_gates", {}).get("lease_absolute_minimum_years", 80)
         lease_years = prop.get("lease_years")
 
         if lease_years is None:
             return GateResult("lease_length", True, "Lease length unknown — needs verification", needs_verification=True)
-        if lease_years < min_years:
-            return GateResult("lease_length", False, f"Lease {lease_years}yr < minimum {min_years}yr")
-        return GateResult("lease_length", True, f"Lease {lease_years}yr")
+
+        # Above preferred minimum — no extension needed
+        if lease_years >= preferred_years:
+            return GateResult("lease_length", True, f"Lease {lease_years}yr")
+
+        # Below absolute minimum — extension cost prohibitively expensive
+        if lease_years < absolute_min_years:
+            return GateResult(
+                "lease_length", False,
+                f"Lease {lease_years}yr < {absolute_min_years}yr hard minimum (marriage value cliff)"
+            )
+
+        # Between absolute_min and preferred: estimate extension cost and check affordability
+        price = prop.get("price", 0)
+        ground_rent_pa = prop.get("ground_rent_pa") or 0
+
+        calc = FinancialCalculator(config)
+        extension = calc.estimate_lease_extension_cost(
+            property_price=price,
+            lease_years_remaining=lease_years,
+            ground_rent_pa=ground_rent_pa,
+        )
+        extension_cost = extension["total_extension_cost"]
+        effective_price = price + extension_cost
+
+        # Check if effective price (purchase + extension) fits within the dynamic cap
+        service_charge_pa = prop.get("service_charge_pa") or 0
+        ct_monthly, _ = calc._get_ct_monthly(prop)
+        dynamic_cap = calc.get_dynamic_price_cap(service_charge_pa, ground_rent_pa, ct_monthly)
+
+        if effective_price <= dynamic_cap:
+            return GateResult(
+                "lease_length", True,
+                f"Lease {lease_years}yr — extension ~£{extension_cost:,} "
+                f"(effective £{effective_price:,} within £{dynamic_cap:,} cap)",
+                needs_verification=True,
+            )
+
+        return GateResult(
+            "lease_length", False,
+            f"Lease {lease_years}yr — extension ~£{extension_cost:,} "
+            f"pushes effective price to £{effective_price:,} (cap £{dynamic_cap:,})"
+        )
 
     return GateResult("lease_length", False, f"Unknown tenure: {tenure}")
 
