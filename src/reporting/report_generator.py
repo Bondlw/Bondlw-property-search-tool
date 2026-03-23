@@ -252,7 +252,41 @@ class ReportGenerator:
                 new_today.append(prop)
 
             # Track favourites — shown in their own section only (prevents duplicate card IDs)
+            # Set qualification label for every property
+            neg_check = prop.get("_negotiation")
+            offer_qualifies = neg_check and neg_check.get("would_qualify")
+            offer_price = neg_check.get("suggested_offer") if neg_check else None
+            offer_discount = neg_check.get("discount_pct") if neg_check else None
+
+            if passed:
+                has_unverified = any(g.needs_verification for g in gate_results)
+                if has_unverified:
+                    prop["_qualification_label"] = "qualifies-unverified"
+                    prop["_qualification_text"] = "Qualifies at asking (unverified)"
+                else:
+                    prop["_qualification_label"] = "qualifies-asking"
+                    prop["_qualification_text"] = "Qualifies at asking price"
+            elif offer_qualifies and offer_price:
+                prop["_qualification_label"] = "qualifies-offer"
+                prop["_qualification_text"] = f"Qualifies at offer \u00a3{offer_price // 1000:.0f}k (\u2212{offer_discount}%)"
+            else:
+                prop["_qualification_label"] = "does-not-qualify"
+                prop["_qualification_text"] = "Does not qualify"
+
             if prop["_is_favourite"]:
+                # Classify favourite so its card shows qualifying status
+                if passed:
+                    has_unverified = any(g.needs_verification for g in gate_results)
+                    if has_unverified:
+                        prop["_gate_status"] = "needs-verify"
+                        prop["_needs_verification"] = True
+                        prop["_unverified_fields"] = [g for g in gate_results if g.needs_verification]
+                    else:
+                        prop["_gate_status"] = "qualifying"
+                        prop["_needs_verification"] = False
+                else:
+                    prop["_gate_status"] = "failed"
+                    prop["_needs_verification"] = False
                 favourites.append(prop)
                 continue
 
@@ -268,8 +302,6 @@ class ReportGenerator:
                     prop["_needs_verification"] = False
                     qualifying.append(prop)
             else:
-                neg_check = prop.get("_negotiation")
-                offer_qualifies = neg_check and neg_check.get("would_qualify")
                 asking_rating = (prop.get("_costs") or {}).get("affordability_rating", "red")
                 if len(failed_gates) <= 2 and offer_qualifies and asking_rating != "red":
                     near_misses.append(prop)
@@ -280,7 +312,7 @@ class ReportGenerator:
             # and asking price is amber (not deeply red)
             if not passed:
                 monthly = prop["_costs"]["total_monthly"]
-                monthly_max = self.config.get("monthly_target", {}).get("max", 889)
+                monthly_max = self.config.get("monthly_target", {}).get("max", 950)
                 stretch_ceiling = calc.take_home * 0.40
                 neg = prop.get("_negotiation")
                 offer_qualifies = neg and neg.get("would_qualify")
@@ -392,12 +424,16 @@ class ReportGenerator:
         shortlisted.sort(key=lambda p: -(p.get("_scores") or {}).get("total", 0))
 
         template = self.env.get_template("daily_report.html")
+        qualifying_fav_count = sum(1 for p in favourites if p.get("_gate_status") == "qualifying")
+        needs_verify_fav_count = sum(1 for p in favourites if p.get("_gate_status") == "needs-verify")
         html = template.render(
             report_date=today,
             generated_at=datetime.now().strftime("%A %d %B %Y at %H:%M"),
             total_properties=radius_filtered_count,
             qualifying_count=len(qualifying),
+            qualifying_fav_count=qualifying_fav_count,
             needs_verification_count=len(needs_verification),
+            needs_verify_fav_count=needs_verify_fav_count,
             new_today_count=len(new_today),
             near_miss_count=len(near_misses),
             qualifying=qualifying,

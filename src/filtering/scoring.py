@@ -51,7 +51,7 @@ def score_financial_fit(prop: dict, config: dict, max_points: float) -> tuple[fl
 
     bills = config.get("estimated_bills", {}).get("total_monthly", 198)
     target_min = config.get("monthly_target", {}).get("min", 795) + bills
-    target_max = config.get("monthly_target", {}).get("max", 889) + bills
+    target_max = config.get("monthly_target", {}).get("max", 950) + bills
     take_home = config.get("user", {}).get("monthly_take_home", 2650)
 
     if total <= 0:

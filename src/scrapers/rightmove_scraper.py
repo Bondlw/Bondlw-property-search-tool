@@ -46,8 +46,8 @@ class RightmoveScraper(BaseScraper):
             budget_config.get("leasehold", {}).get("ideal_min", 170000),
         )
         max_price = max(
-            budget_config.get("freehold", {}).get("search_max", 200000),
-            budget_config.get("leasehold", {}).get("search_max", 200000),
+            budget_config.get("freehold", {}).get("search_max", 210000),
+            budget_config.get("leasehold", {}).get("search_max", 210000),
         )
 
         all_listings = []

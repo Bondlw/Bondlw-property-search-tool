@@ -80,6 +80,8 @@
     <div>
       <span class="price">{{ prop.price|currency }}</span>
       {% if section_label %}<span class="badge section-label section-{{ section_label|lower|replace(' ', '-') }}">{{ section_label }}</span>{% endif %}
+      {% if prop._gate_status == 'qualifying' and section_label == 'favourite' %}<span class="badge section-label section-qualifying" style="background:var(--green);color:#fff;">✓ qualifying</span>{% elif prop._gate_status == 'needs-verify' and section_label == 'favourite' %}<span class="badge section-label section-needs-verify" style="background:var(--amber);color:#fff;">⚠ needs verify</span>{% endif %}
+      {% if prop._qualification_label == 'qualifies-asking' %}<span class="badge" style="background:var(--green);color:#fff;font-size:0.65rem;">✓ At asking</span>{% elif prop._qualification_label == 'qualifies-unverified' %}<span class="badge" style="background:var(--amber);color:#fff;font-size:0.65rem;">✓ At asking (unverified)</span>{% elif prop._qualification_label == 'qualifies-offer' %}<span class="badge" style="background:#2563eb;color:#fff;font-size:0.65rem;">✓ {{ prop._qualification_text }}</span>{% endif %}
       {% if prop._is_new %}<span class="badge new" id="new-badge-{{ prop.id }}" onclick="dismissNew({{ prop.id }})" title="Click to dismiss">NEW</span>{% endif %}
       {% if prop._is_reduced %}
         <span class="badge reduced">↓ REDUCED</span>
@@ -205,12 +207,12 @@
       <div class="cost-row cost-row-bills"><span>Water</span><span>~£{{ config.estimated_bills.water_monthly | default(40) }}</span></div>
       <div class="cost-row cost-row-bills"><span>Insurance</span><span>~£{{ config.estimated_bills.insurance_monthly | default(20) }}</span></div>
       <div class="cost-row cost-row-bills"><span>Broadband</span><span>~£{{ config.estimated_bills.broadband_monthly | default(28) }}</span></div>
-      <div class="cost-row cost-row-bills"><span>TV Licence</span><span>~£{{ config.estimated_bills.tv_licence_monthly | default(13) }}</span></div>
+      <div class="cost-row cost-row-bills"><span>TV Licence</span><span>~£{{ config.estimated_bills.tv_licence_monthly | default(0) }}</span></div>
       <div class="cost-row cost-total"><span>Housing + bills</span><span>£{{ prop._costs.total_all_in_monthly|int }}/mo</span></div>
 
       <div style="font-weight:600;color:var(--text);margin:4px 0 2px;">Living Costs</div>
       <div class="cost-row cost-row-bills"><span>Food</span><span>~£{{ config.living_costs.food_monthly | default(250) }}</span></div>
-      <div class="cost-row cost-row-bills"><span>Transport</span><span>~£{{ config.living_costs.transport_monthly | default(150) }}</span></div>
+      <div class="cost-row cost-row-bills"><span>Transport</span><span>~£{{ config.living_costs.transport_monthly | default(65) }}</span></div>
       <div class="cost-row cost-row-bills"><span>Other</span><span>~£{{ config.living_costs.other_monthly | default(25) }}</span></div>
       <div class="cost-row cost-total"><span>True all-in</span><span>£{{ prop._costs.true_all_in_monthly|default(prop._costs.total_all_in_monthly)|int }}/mo ({{ prop._costs.true_all_in_pct_take_home|default(prop._costs.all_in_pct_take_home) }}%)</span></div>
 
@@ -647,11 +649,11 @@
     <div class="label">Tracked</div>
   </div>
   <div class="stat green">
-    <div class="value">{{ qualifying_count }}</div>
+    <div class="value">{{ qualifying_count }}{% if qualifying_fav_count %}<span style="font-size:0.55em;color:var(--muted);font-weight:400;">+{{ qualifying_fav_count }}★</span>{% endif %}</div>
     <div class="label">Qualifying</div>
   </div>
   <div class="stat">
-    <div class="value">{{ needs_verification_count }}</div>
+    <div class="value">{{ needs_verification_count }}{% if needs_verify_fav_count %}<span style="font-size:0.55em;color:var(--muted);font-weight:400;">+{{ needs_verify_fav_count }}★</span>{% endif %}</div>
     <div class="label">Needs Verifying</div>
   </div>
   <div class="stat amber">

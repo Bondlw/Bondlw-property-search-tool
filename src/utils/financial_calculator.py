@@ -2,15 +2,14 @@
 
 Housing-only tiers (before bills):
   GREEN:  housing ≤30% of take-home (≤£795)
-  AMBER:  housing 30-33.5% (£795-£889) — qualifying max
-  RED:    housing >33.5% (>£889)
-  35%:    £928 — hard caution threshold
+  AMBER:  housing 30-35.8% (£795-£950) — qualifying max
+  RED:    housing >35.8% (>£950)
   40%:    £1,060 — stretch ceiling (negotiation only)
 
 All-in (housing + £198 bills):
   GREEN: ≤£993/mo
-  AMBER: £993-£1,087/mo
-  RED:   >£1,087/mo
+  AMBER: £993-£1,148/mo
+  RED:   >£1,148/mo
 """
 
 import math
@@ -540,7 +539,7 @@ class FinancialCalculator:
     ) -> tuple[bool, float | None]:
         """Check if a property is a stretch opportunity based on monthly cost.
 
-        Stretch = monthly housing cost > AMBER max (£889) but ≤ 40% ceiling (~£1,060).
+        Stretch = monthly housing cost > AMBER max (£950) but ≤ 40% ceiling (~£1,060).
         """
         stretch = config.get("stretch", {})
         min_days = stretch.get("min_days_on_market", 60)

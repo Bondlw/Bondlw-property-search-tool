@@ -22,16 +22,16 @@ budget:
   # These values just control what the scraper fetches.
   freehold:
     ideal_min: 160000
-    search_max: 200000       # max listed price the scraper will fetch
+    search_max: 210000       # max listed price the scraper will fetch
   leasehold:
     ideal_min: 130000        # lower floor — leaseholds have SC/GR reducing the dynamic cap
-    search_max: 200000       # max listed price the scraper will fetch
+    search_max: 210000       # max listed price the scraper will fetch
 
 monthly_target:
   min: 795    # housing ≤30% of take-home — GREEN (comfortable)
-  max: 889    # housing ceiling — £1,100 all-in after £211 bills — AMBER/qualifying max
+  max: 950    # housing ceiling — 35.8% of take-home — AMBER/qualifying max
 
-all_in_monthly_max: 1087  # hard ceiling (housing £889 + bills £198) — max advisable for single income
+all_in_monthly_max: 1148  # hard ceiling (housing £950 + bills £198) — 43.3% of take-home
 
 estimated_bills:
   # Verified UK 2025-26 figures for 1-bed flat in Kent
@@ -65,8 +65,8 @@ council_tax_estimates:
 hard_gates:
   min_bedrooms: 1
   lease_minimum_years: 120
-  lease_absolute_minimum_years: 80  # Below this, marriage value makes extension prohibitively expensive
-  sof_lease_minimum_years: 80  # Share of freehold: extension is cheap (~£1k), no marriage value penalty
+  lease_absolute_minimum_years: 120  # No exceptions — 120yr minimum across the board
+  sof_lease_minimum_years: 120  # Same as standard — no extension thinking required
   service_charge_max_pa: 1800   # realistic for TW area — £1,500-1,800 common in managed blocks
   service_charge_ideal_pa: 1200  # preferred cap — above this check what's included
   ground_rent_max_pa: 350       # lenient — but auto-reject any escalation/doubling clauses

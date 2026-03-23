@@ -159,11 +159,11 @@ def check_monthly_cost(prop: dict, enrichment: dict | None, config: dict) -> Gat
     This is the definitive affordability gate — even if a property's price
     is below the cap, high service charges, ground rent, or council tax
     can push the monthly cost above the acceptance criteria.
-    Qualifying ceiling = monthly_target.max (£889 housing = £1,100 all-in).
+    Qualifying ceiling = monthly_target.max (£950 housing = £1,148 all-in).
     Properties under monthly_target.min (£795) show as GREEN (comfortable).
     Properties between min and max show as AMBER (qualifying stretch).
     """
-    monthly_max = config.get("monthly_target", {}).get("max", 889)
+    monthly_max = config.get("monthly_target", {}).get("max", 950)
     monthly = _estimate_monthly_housing(prop, config)
     if monthly is None:
         return GateResult("monthly_cost", False, "Cannot estimate monthly cost")
@@ -325,7 +325,7 @@ def check_lease_length(prop: dict, enrichment: dict | None, config: dict) -> Gat
         return GateResult("lease_length", True, "Freehold — no lease")
 
     if tenure == "share_of_freehold":
-        min_years = config.get("hard_gates", {}).get("sof_lease_minimum_years", 80)
+        min_years = config.get("hard_gates", {}).get("sof_lease_minimum_years", 120)
         lease_years = prop.get("lease_years")
 
         if lease_years is None:
@@ -336,7 +336,7 @@ def check_lease_length(prop: dict, enrichment: dict | None, config: dict) -> Gat
 
     if tenure == "leasehold":
         preferred_years = config.get("hard_gates", {}).get("lease_minimum_years", 120)
-        absolute_min_years = config.get("hard_gates", {}).get("lease_absolute_minimum_years", 80)
+        absolute_min_years = config.get("hard_gates", {}).get("lease_absolute_minimum_years", 120)
         lease_years = prop.get("lease_years")
 
         if lease_years is None:
@@ -396,7 +396,7 @@ def check_service_charge(prop: dict, enrichment: dict | None, config: dict) -> G
         return GateResult("service_charge", True, "Freehold — no service charge")
 
     if tenure in ("leasehold", "share_of_freehold"):
-        max_sc = config.get("hard_gates", {}).get("service_charge_max_pa", 1200)
+        max_sc = config.get("hard_gates", {}).get("service_charge_max_pa", 1800)
         sc = prop.get("service_charge_pa")
 
         if sc is None:
@@ -416,7 +416,7 @@ def check_ground_rent(prop: dict, enrichment: dict | None, config: dict) -> Gate
         return GateResult("ground_rent", True, "Freehold — no ground rent")
 
     if tenure in ("leasehold", "share_of_freehold"):
-        max_gr = config.get("hard_gates", {}).get("ground_rent_max_pa", 250)
+        max_gr = config.get("hard_gates", {}).get("ground_rent_max_pa", 350)
         gr = prop.get("ground_rent_pa")
 
         if gr is None:
@@ -550,7 +550,7 @@ def check_supermarket_walkable(prop: dict, enrichment: dict | None, config: dict
     if not enrichment:
         return GateResult("supermarket_walkable", False, "No enrichment data")
 
-    max_min = config.get("hard_gates", {}).get("supermarket_max_walk_min", 25)
+    max_min = config.get("hard_gates", {}).get("supermarket_max_walk_min", 30)
 
     # Prefer nearest_supermarket_* (any chain, added in v3 enrichment)
     best = enrichment.get("nearest_supermarket_walk_min")
@@ -596,10 +596,10 @@ def check_crime_safety(prop: dict, enrichment: dict | None, config: dict) -> Gat
     failures = []
 
     checks = {
-        "asb": thresholds.get("asb_monthly_max", 15),
-        "burglary": thresholds.get("burglary_monthly_max", 5),
-        "drugs": thresholds.get("drugs_monthly_max", 5),
-        "violent": thresholds.get("violent_monthly_max", 10),
+        "asb": thresholds.get("asb_monthly_max", 10),
+        "burglary": thresholds.get("burglary_monthly_max", 3),
+        "drugs": thresholds.get("drugs_monthly_max", 3),
+        "violent": thresholds.get("violent_monthly_max", 8),
     }
 
     for category, max_val in checks.items():

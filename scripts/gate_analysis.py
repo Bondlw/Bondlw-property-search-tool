@@ -92,13 +92,13 @@ for label, test in brackets:
     print(f"  {label:25s}  {n:4d} properties")
 
 print()
-print("=== PROPERTIES THAT WOULD QUALIFY IF GREEN RAISED TO £889 (£1,100 all-in) ===")
+print("=== PROPERTIES THAT WOULD QUALIFY IF GREEN RAISED TO £950 (£1,148 all-in) ===")
 newly_qualifying = 0
 for prop in props:
     enrichment = enrichments.get(prop["id"])
     # Temporarily test with raised green
     config_copy = dict(config)
-    config_copy["monthly_target"] = {"min": 889, "max": 928}
+    config_copy["monthly_target"] = {"min": 950, "max": 1000}
     passed_new, _ = check_all_gates(prop, enrichment, config_copy)
 
     # Check if it passes with new green but failed with old

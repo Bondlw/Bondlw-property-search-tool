@@ -102,7 +102,7 @@ for row in rows:
         fails.append("%d beds < min %d" % (beds, gates['min_bedrooms']))
     
     # Budget
-    search_max = budget.get('search_max', 200000)
+    search_max = budget.get('search_max', 210000)
     if price is not None and price > search_max:
         fails.append("price %d > max %d" % (price, search_max))
     
