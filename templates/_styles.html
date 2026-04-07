@@ -282,6 +282,27 @@
   .table-view .score-cell { font-weight: 600; }
   .table-view .score-cell.high { color: var(--green); } .table-view .score-cell.medium { color: var(--amber); } .table-view .score-cell.low { color: var(--red); }
   .table-view a { color: var(--accent); }
+  .table-view .expand-chevron { cursor: pointer; user-select: none; transition: transform 0.2s; display: inline-block; color: var(--muted); font-size: 0.7rem; }
+  .table-view tr.expanded .expand-chevron { transform: rotate(90deg); }
+  .table-view tr.tbl-detail-row > td { padding: 0; border-bottom: 2px solid var(--accent); }
+  .table-view tr.tbl-detail-row:hover { background: none; }
+  .tbl-detail-panel { display: flex; gap: 16px; padding: 12px 16px; background: var(--score-bg); max-width: 100%; overflow: hidden; }
+  .tbl-detail-panel .tbl-detail-images { flex: 0 0 320px; max-width: 320px; }
+  .tbl-detail-panel .tbl-detail-images img { width: 100%; border-radius: 6px; display: block; margin-bottom: 6px; max-height: 220px; object-fit: cover; }
+  .tbl-detail-panel .tbl-detail-images .tbl-thumb-strip { display: flex; gap: 4px; overflow-x: auto; margin-top: 4px; }
+  .tbl-detail-panel .tbl-detail-images .tbl-thumb-strip img { width: 56px; height: 42px; object-fit: cover; border-radius: 3px; cursor: pointer; opacity: 0.7; flex-shrink: 0; }
+  .tbl-detail-panel .tbl-detail-images .tbl-thumb-strip img:hover, .tbl-detail-panel .tbl-detail-images .tbl-thumb-strip img.active { opacity: 1; outline: 2px solid var(--accent); }
+  .tbl-detail-panel .tbl-detail-info { flex: 1; min-width: 0; font-size: var(--text-xs); line-height: 1.5; }
+  .tbl-detail-panel .tbl-detail-info .tbl-detail-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .tbl-detail-panel .tbl-detail-info .tbl-detail-meta .tag { font-size: 0.65rem; }
+  .tbl-detail-panel .tbl-detail-info .tbl-detail-desc { color: var(--muted); max-height: 100px; overflow-y: auto; margin-bottom: 8px; white-space: pre-wrap; word-break: break-word; }
+  .tbl-detail-panel .tbl-detail-info .tbl-detail-links { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tbl-detail-panel .tbl-detail-info .tbl-detail-links a, .tbl-detail-panel .tbl-detail-info .tbl-detail-links button { font-size: 0.7rem; }
+  .tbl-detail-panel .tbl-detail-costs { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 4px 12px; margin-bottom: 8px; }
+  .tbl-detail-panel .tbl-cost-item { display: flex; justify-content: space-between; }
+  .tbl-detail-panel .tbl-cost-label { color: var(--muted); }
+  .tbl-detail-panel .tbl-cost-value { font-weight: 600; }
+  .tbl-detail-panel .tbl-detail-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
   body.view-table .cards { display: none; }
   body.view-table .table-view { display: block; }
 

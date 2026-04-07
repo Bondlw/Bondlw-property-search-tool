@@ -28,10 +28,11 @@ budget:
     search_max: 210000       # max listed price the scraper will fetch
 
 monthly_target:
-  min: 795    # housing ≤30% of take-home — GREEN (comfortable)
-  max: 950    # housing ceiling — 35.8% of take-home — AMBER/qualifying max
+  min: 795          # housing ≤30% of take-home — GREEN (comfortable)
+  recommended: 874  # housing 33% of take-home — AMBER (recommended max for single/fixed income)
+  max: 954          # housing 36% of take-home — STRETCH (absolute ceiling)
 
-all_in_monthly_max: 1148  # hard ceiling (housing £950 + bills £198) — 43.3% of take-home
+all_in_monthly_max: 1200  # hard ceiling (housing + bills) — 45.3% of take-home
 
 estimated_bills:
   # Verified UK 2025-26 figures for 1-bed flat in Kent
@@ -69,14 +70,23 @@ hard_gates:
   sof_lease_minimum_years: 120  # Same as standard — no extension thinking required
   service_charge_max_pa: 1800   # realistic for TW area — £1,500-1,800 common in managed blocks
   service_charge_ideal_pa: 1200  # preferred cap — above this check what's included
-  ground_rent_max_pa: 350       # lenient — but auto-reject any escalation/doubling clauses
+  ground_rent_max_pa: 250       # matches lender 0.1% rule — auto-reject escalation/doubling clauses
   ground_rent_ideal_pa: 200     # preferred — flag above this
   council_tax_max_band: "C"
   epc_minimum_rating: "C"
-  station_max_walk_min: 25
+  station_max_walk_min: 30
   supermarket_max_walk_min: 30
   supermarket_preferred_walk_min: 30
   flood_zone_reject: 3  # Reject Zone 3, flag Zone 2
+
+# Tolerance bands — overshoot under this amount passes with "needs verification"
+# instead of hard fail. Over tolerance = still rejected.
+# Monetary tolerances are per-month thinking.
+gate_tolerances:
+  service_charge_pa: 600  # £50/mo leeway — won't skip a place for ≤£50/mo extra
+  ground_rent_pa: 50      # ~£4/mo leeway — GR cap is £250, tight tolerance to match lender limits
+  walk_minutes: 5         # 5 min leeway on walk gates
+  crime_per_category: 2   # 2 incidents/mo leeway per category
 
 crime_thresholds:
   asb_monthly_max: 10
@@ -95,11 +105,26 @@ scoring:
 stretch:
   max_over_budget_pct: 15
   min_days_on_market: 60
+  baseline_offer_pct: 7       # minimum reasonable offer discount (%) — buyer's market: ~6-7% reductions typical
 
 stale:
   min_days_on_market: 30
 
 max_radius_miles: 10  # Skip DB properties further than this from any configured search area
+
+# Reference property — flag any listing similar to this target on the report
+# Used to surface comparable alternatives even in other areas
+reference_property:
+  enabled: true
+  name: "Queripel Close"
+  portal_id: 87629463
+  size_sqft: 542
+  price: 179950
+  bedrooms: 1
+  tenure: "leasehold"
+  # Matching tolerances — how far from target to still count as "similar"
+  size_tolerance_pct: 15     # ±15% of size (461–623 sqft)
+  price_tolerance_pct: 15    # ±15% of price (£153k–£207k)
 
 office:
   name: "County Gate, Maidstone"
@@ -116,6 +141,16 @@ excluded_address_terms:
   - monchelsea
   - chatham
   - rochester
+  - ", ME14"    # Maidstone postcodes — catch addresses without "maidstone" in name
+  - ", ME15"
+  - ", ME16"
+  - ", ME1 "    # Rochester/Chatham postcodes
+  - ", ME2 "
+  - ", ME4 "
+  - ", ME5 "
+  - ", ME7 "
+  - ", TN9"     # Tonbridge — too far from target area
+  - staplehurst # Poor rail links for commuting
 
 search_areas:
   # TW cluster: sister near High Brooms (Southborough), London connections via Southeastern

@@ -86,8 +86,15 @@ for r in rows:
     print(f"  >>> MONTHLY: Mortgage £{mortgage_monthly:.0f} + SC £{sc_monthly:.0f} + GR £{gr_monthly:.0f} + CT £{ct_monthly:.0f} = Housing £{housing_monthly:.0f} | All-in £{all_in_monthly:.0f}")
     if housing_monthly > 0:
         pct = (all_in_monthly / 2650) * 100
-        rag = "GREEN" if housing_monthly <= 795 else ("AMBER" if housing_monthly <= 950 else "RED")
-        print(f"  >>> {rag} | {pct:.1f}% of take-home | Max housing: £950 | Max all-in: £1,148")
+        if housing_monthly <= 795:
+            rag = "GREEN"
+        elif housing_monthly <= 874:
+            rag = "AMBER"
+        elif housing_monthly <= 954:
+            rag = "STRETCH"
+        else:
+            rag = "RED"
+        print(f"  >>> {rag} | {pct:.1f}% of take-home | Max housing: £954 | Max all-in: £1,152")
     if failed_gates:
         reasons = "; ".join(f"{g['gate_name']}: {g['reason']}" for g in failed_gates)
         print(f"  >>> FAILED GATES: {reasons}")

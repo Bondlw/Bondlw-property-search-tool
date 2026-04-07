@@ -257,8 +257,14 @@ class TestGroundRent:
         result = check_ground_rent(leasehold_property, None, base_config)
         assert result.passed is True
 
-    def test_over_cap_fails(self, leasehold_property, base_config):
+    def test_over_cap_within_tolerance_flags(self, leasehold_property, base_config):
         leasehold_property["ground_rent_pa"] = 500
+        result = check_ground_rent(leasehold_property, None, base_config)
+        assert result.passed is True
+        assert result.needs_verification is True
+
+    def test_over_cap_beyond_tolerance_fails(self, leasehold_property, base_config):
+        leasehold_property["ground_rent_pa"] = 1000
         result = check_ground_rent(leasehold_property, None, base_config)
         assert result.passed is False
 

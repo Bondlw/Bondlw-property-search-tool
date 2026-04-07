@@ -11,7 +11,8 @@ TERM_YEARS = 30
 TAKE_HOME = 2650
 BILLS = 198
 GREEN_MAX = 795
-AMBER_MAX = 950
+AMBER_MAX = 874
+STRETCH_MAX = 954
 CT_MAP = {"A": 94, "B": 109, "C": 125, "D": 140, "E": 171}
 
 
@@ -36,7 +37,7 @@ def format_property(row):
     housing = mortgage + sc / 12 + gr / 12 + ct_mo
     all_in = housing + BILLS
     pct = (all_in / TAKE_HOME) * 100
-    status = "GREEN" if housing <= GREEN_MAX else ("AMBER" if housing <= AMBER_MAX else "RED")
+    status = "GREEN" if housing <= GREEN_MAX else ("AMBER" if housing <= AMBER_MAX else ("STRETCH" if housing <= STRETCH_MAX else "RED"))
 
     lines = []
     pid = row["id"]

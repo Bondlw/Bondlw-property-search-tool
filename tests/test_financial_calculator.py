@@ -223,11 +223,12 @@ class TestDynamicPriceCap:
 class TestDiscountSignals:
     """Test negotiation discount signal logic."""
 
-    def test_no_signals_returns_empty(self, base_config):
+    def test_no_signals_returns_baseline(self, base_config):
         calc = FinancialCalculator(base_config)
         signals, pct = calc._calculate_discount_signals(None, None, [])
-        assert signals == []
-        assert pct == 0
+        baseline = base_config.get("stretch", {}).get("baseline_offer_pct", 5)
+        assert any("Reasonable offer" in s for s in signals)
+        assert pct == baseline
 
     def test_stale_listing_180d(self, base_config):
         calc = FinancialCalculator(base_config)
@@ -262,10 +263,13 @@ class TestDiscountSignals:
 class TestNegotiationAnalysis:
     """Test negotiation analysis."""
 
-    def test_no_signals_returns_none(self, base_config, freehold_property):
+    def test_baseline_always_returns_analysis(self, base_config, freehold_property):
         calc = FinancialCalculator(base_config)
         result = calc.calculate_negotiation_analysis(freehold_property)
-        assert result is None
+        assert result is not None
+        baseline = base_config.get("stretch", {}).get("baseline_offer_pct", 5)
+        assert result["discount_pct"] == baseline
+        assert result["suggested_offer"] < freehold_property["price"]
 
     def test_with_signals_returns_analysis(self, base_config, freehold_property):
         calc = FinancialCalculator(base_config)

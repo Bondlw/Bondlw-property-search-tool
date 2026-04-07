@@ -119,10 +119,15 @@ def validate_config(config: dict) -> list[str]:
 
     # Cross-field validation
     monthly_min = config.get("monthly_target", {}).get("min", 0)
+    monthly_recommended = config.get("monthly_target", {}).get("recommended", 0)
     monthly_max = config.get("monthly_target", {}).get("max", 0)
     if monthly_min > monthly_max:
         errors.append(
             f"monthly_target.min ({monthly_min}) exceeds monthly_target.max ({monthly_max})"
+        )
+    if monthly_recommended and (monthly_recommended < monthly_min or monthly_recommended > monthly_max):
+        errors.append(
+            f"monthly_target.recommended ({monthly_recommended}) must be between min ({monthly_min}) and max ({monthly_max})"
         )
 
     # Scoring weights should sum to ~100

@@ -142,10 +142,13 @@ def check_price_cap(prop: dict, enrichment: dict | None, config: dict) -> GateRe
 
     # Determine rating tier for context
     green_cap = calc.calculate_max_price(service_charge_pa, ground_rent_pa, ct_monthly)["tiers"]["green"]["max_price"]
+    amber_cap = calc.calculate_max_price(service_charge_pa, ground_rent_pa, ct_monthly)["tiers"]["amber"]["max_price"]
     if price <= green_cap:
         label = "GREEN comfortable"
+    elif price <= amber_cap:
+        label = "AMBER recommended"
     else:
-        label = "AMBER qualifying"
+        label = "STRETCH ceiling"
 
     return GateResult(
         "price_cap", True,
@@ -159,9 +162,10 @@ def check_monthly_cost(prop: dict, enrichment: dict | None, config: dict) -> Gat
     This is the definitive affordability gate — even if a property's price
     is below the cap, high service charges, ground rent, or council tax
     can push the monthly cost above the acceptance criteria.
-    Qualifying ceiling = monthly_target.max (£950 housing = £1,148 all-in).
+    Qualifying ceiling = monthly_target.max (£954 housing = £1,152 all-in).
     Properties under monthly_target.min (£795) show as GREEN (comfortable).
-    Properties between min and max show as AMBER (qualifying stretch).
+    Properties between min and recommended (£874) show as AMBER (recommended max).
+    Properties between recommended and max (£954) show as STRETCH (absolute ceiling).
     """
     monthly_max = config.get("monthly_target", {}).get("max", 950)
     monthly = _estimate_monthly_housing(prop, config)
@@ -397,12 +401,18 @@ def check_service_charge(prop: dict, enrichment: dict | None, config: dict) -> G
 
     if tenure in ("leasehold", "share_of_freehold"):
         max_sc = config.get("hard_gates", {}).get("service_charge_max_pa", 1800)
+        tolerance = config.get("gate_tolerances", {}).get("service_charge_pa", 600)
         sc = prop.get("service_charge_pa")
 
         if sc is None:
             return GateResult("service_charge", True, "Service charge unknown — needs verification", needs_verification=True)
+        if sc > max_sc + tolerance:
+            overshoot_monthly = round((sc - max_sc) / 12)
+            return GateResult("service_charge", False, f"SC £{sc}/yr exceeds cap £{max_sc}/yr (+£{overshoot_monthly}/mo over)")
         if sc > max_sc:
-            return GateResult("service_charge", False, f"SC £{sc}/yr exceeds cap £{max_sc}/yr")
+            overshoot = sc - max_sc
+            overshoot_monthly = round(overshoot / 12)
+            return GateResult("service_charge", True, f"SC £{sc}/yr slightly above cap £{max_sc}/yr (+£{overshoot_monthly}/mo, squeezable)", needs_verification=True)
         return GateResult("service_charge", True, f"SC £{sc}/yr within cap £{max_sc}/yr")
 
     return GateResult("service_charge", False, f"Unknown tenure: {tenure}")
@@ -417,12 +427,18 @@ def check_ground_rent(prop: dict, enrichment: dict | None, config: dict) -> Gate
 
     if tenure in ("leasehold", "share_of_freehold"):
         max_gr = config.get("hard_gates", {}).get("ground_rent_max_pa", 350)
+        tolerance = config.get("gate_tolerances", {}).get("ground_rent_pa", 600)
         gr = prop.get("ground_rent_pa")
 
         if gr is None:
             return GateResult("ground_rent", True, "Ground rent unknown — needs verification", needs_verification=True)
+        if gr > max_gr + tolerance:
+            overshoot_monthly = round((gr - max_gr) / 12)
+            return GateResult("ground_rent", False, f"GR £{gr}/yr exceeds cap £{max_gr}/yr (+£{overshoot_monthly}/mo over)")
         if gr > max_gr:
-            return GateResult("ground_rent", False, f"GR £{gr}/yr exceeds cap £{max_gr}/yr")
+            overshoot = gr - max_gr
+            overshoot_monthly = round(overshoot / 12)
+            return GateResult("ground_rent", True, f"GR £{gr}/yr slightly above cap £{max_gr}/yr (+£{overshoot_monthly}/mo, squeezable)", needs_verification=True)
         return GateResult("ground_rent", True, f"GR £{gr}/yr within cap £{max_gr}/yr")
 
     return GateResult("ground_rent", False, f"Unknown tenure: {tenure}")
@@ -531,17 +547,23 @@ def check_station_walkable(prop: dict, enrichment: dict | None, config: dict) ->
         return GateResult("station_walkable", False, "No enrichment data")
 
     max_min = config.get("hard_gates", {}).get("station_max_walk_min", 25)
+    tolerance = config.get("gate_tolerances", {}).get("walk_minutes", 5)
     walk_min = enrichment.get("nearest_station_walk_min")
 
     if walk_min is None:
         return GateResult("station_walkable", False, "Station distance unknown")
-    if walk_min > max_min:
-        station = enrichment.get("nearest_station_name", "Unknown")
+    station = enrichment.get("nearest_station_name", "Unknown")
+    if walk_min > max_min + tolerance:
         return GateResult(
             "station_walkable", False,
-            f"{station}: {walk_min} min walk > {max_min} min max"
+            f"{station}: {walk_min} min walk > {max_min} min max (over {tolerance} min tolerance)"
         )
-    station = enrichment.get("nearest_station_name", "Unknown")
+    if walk_min > max_min:
+        return GateResult(
+            "station_walkable", True,
+            f"{station}: {walk_min} min walk (slightly above {max_min} min, within {tolerance} min tolerance)",
+            needs_verification=True,
+        )
     return GateResult("station_walkable", True, f"{station}: {walk_min} min walk")
 
 
@@ -567,12 +589,20 @@ def check_supermarket_walkable(prop: dict, enrichment: dict | None, config: dict
             best = aldi_min
             best_name = "Aldi"
 
+    tolerance = config.get("gate_tolerances", {}).get("walk_minutes", 5)
+
     if best is None:
         return GateResult("supermarket_walkable", False, "No supermarket found nearby")
-    if best > max_min:
+    if best > max_min + tolerance:
         return GateResult(
             "supermarket_walkable", False,
-            f"Nearest {best_name}: {best} min walk > {max_min} min max"
+            f"Nearest {best_name}: {best} min walk > {max_min} min max (over {tolerance} min tolerance)"
+        )
+    if best > max_min:
+        return GateResult(
+            "supermarket_walkable", True,
+            f"Nearest {best_name}: {best} min walk (slightly above {max_min} min, within {tolerance} min tolerance)",
+            needs_verification=True,
         )
     return GateResult("supermarket_walkable", True, f"Nearest {best_name}: {best} min walk")
 
@@ -593,7 +623,9 @@ def check_crime_safety(prop: dict, enrichment: dict | None, config: dict) -> Gat
             return GateResult("crime_safety", False, "Invalid crime data")
 
     thresholds = config.get("crime_thresholds", {})
+    tolerance = config.get("gate_tolerances", {}).get("crime_per_category", 2)
     failures = []
+    squeezable = []
 
     checks = {
         "asb": thresholds.get("asb_monthly_max", 10),
@@ -604,11 +636,15 @@ def check_crime_safety(prop: dict, enrichment: dict | None, config: dict) -> Gat
 
     for category, max_val in checks.items():
         actual = crime_summary.get(category, 0)
-        if actual > max_val:
+        if actual > max_val + tolerance:
             failures.append(f"{category}: {actual}/mo > {max_val}")
+        elif actual > max_val:
+            squeezable.append(f"{category}: {actual}/mo (slightly above {max_val})")
 
     if failures:
         return GateResult("crime_safety", False, f"High crime: {', '.join(failures)}")
+    if squeezable:
+        return GateResult("crime_safety", True, f"Crime slightly above on {', '.join(squeezable)} — within tolerance", needs_verification=True)
     return GateResult("crime_safety", True, "Crime levels within thresholds")
 
 

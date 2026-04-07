@@ -55,7 +55,7 @@ for prop in properties:
     housing = costs.get("total_monthly", 0) or 0
     all_in = housing + BILLS
     pct = (all_in / TAKE_HOME) * 100
-    status = "GREEN" if housing <= 795 else ("AMBER" if housing <= 950 else "RED")
+    status = "GREEN" if housing <= 795 else ("AMBER" if housing <= 874 else ("STRETCH" if housing <= 954 else "RED"))
 
     entry = {
         "id": pid,

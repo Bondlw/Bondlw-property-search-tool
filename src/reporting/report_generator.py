@@ -269,6 +269,10 @@ class ReportGenerator:
             elif offer_qualifies and offer_price:
                 prop["_qualification_label"] = "qualifies-offer"
                 prop["_qualification_text"] = f"Qualifies at offer \u00a3{offer_price // 1000:.0f}k (\u2212{offer_discount}%)"
+                # Re-score using the offer price so financial fit reflects what you'd actually pay
+                offer_prop = {**prop, "price": offer_price}
+                prop["_scores"] = score_property(offer_prop, enrichment, self.config)
+                prop["_offer_costs"] = calc.calculate_full_monthly_cost(offer_prop)
             else:
                 prop["_qualification_label"] = "does-not-qualify"
                 prop["_qualification_text"] = "Does not qualify"
@@ -308,16 +312,16 @@ class ReportGenerator:
                 else:
                     rejected.append(prop)
 
-            # Stretch opportunities — only include if a negotiated offer would bring into budget
-            # and asking price is amber (not deeply red)
+            # Stretch opportunities — properties just above the qualifying ceiling
+            # that could come into budget with negotiation (listed 60+ days)
             if not passed:
                 monthly = prop["_costs"]["total_monthly"]
-                monthly_max = self.config.get("monthly_target", {}).get("max", 950)
-                stretch_ceiling = calc.take_home * 0.40
+                monthly_max = self.config.get("monthly_target", {}).get("max", 954)
+                negotiation_ceiling = calc.take_home * 0.40  # £1,060 — upper bound for negotiation targets
                 neg = prop.get("_negotiation")
                 offer_qualifies = neg and neg.get("would_qualify")
                 asking_rating = (prop.get("_costs") or {}).get("affordability_rating", "red")
-                if days and days >= 60 and monthly_max < monthly <= stretch_ceiling and offer_qualifies and asking_rating != "red":
+                if days and days >= 60 and monthly_max < monthly <= negotiation_ceiling and offer_qualifies and asking_rating != "red":
                     over_pct_monthly = round(((monthly - monthly_max) / monthly_max) * 100, 1)
                     prop["_over_budget_pct"] = over_pct_monthly
                     prop["_stretch_monthly"] = round(monthly, 0)
@@ -368,6 +372,7 @@ class ReportGenerator:
         opportunities.sort(key=lambda p: (
             not p.get("_is_new"),
             0 if p.get("_opp_type") == "negotiation" else 1,
+            -(p.get("_scores") or {}).get("total", 0),
             p.get("_stretch_monthly", 9999),
         ))
 
@@ -423,6 +428,44 @@ class ReportGenerator:
         shortlisted = [p for p in in_radius_props if p.get("_tracking_status") == "shortlisted" and not p.get("_is_excluded")]
         shortlisted.sort(key=lambda p: -(p.get("_scores") or {}).get("total", 0))
 
+        # Similar to reference property — flag properties matching target size/price
+        similar_to_target = []
+        ref_config = self.config.get("reference_property", {})
+        if ref_config.get("enabled"):
+            ref_size = ref_config.get("size_sqft", 0)
+            ref_price = ref_config.get("price", 0)
+            ref_portal_id = ref_config.get("portal_id")
+            size_tolerance = ref_config.get("size_tolerance_pct", 15) / 100
+            price_tolerance = ref_config.get("price_tolerance_pct", 15) / 100
+            size_min = ref_size * (1 - size_tolerance) if ref_size else 0
+            size_max = ref_size * (1 + size_tolerance) if ref_size else float("inf")
+            price_min = ref_price * (1 - price_tolerance) if ref_price else 0
+            price_max = ref_price * (1 + price_tolerance) if ref_price else float("inf")
+
+            for prop in in_radius_props:
+                if prop.get("_is_excluded"):
+                    continue
+                # Skip the reference property itself
+                if prop.get("portal_id") == ref_portal_id:
+                    continue
+                prop_size = prop.get("_size_sqft")
+                prop_price = prop.get("price", 0)
+                # Must have size data to compare
+                if not prop_size:
+                    continue
+                if size_min <= prop_size <= size_max and price_min <= prop_price <= price_max:
+                    # Calculate how similar (% difference from reference)
+                    size_diff_pct = abs(prop_size - ref_size) / ref_size * 100 if ref_size else 0
+                    price_diff_pct = abs(prop_price - ref_price) / ref_price * 100 if ref_price else 0
+                    prop["_ref_size_diff_pct"] = round(size_diff_pct, 1)
+                    prop["_ref_price_diff_pct"] = round(price_diff_pct, 1)
+                    prop["_ref_similarity"] = round(100 - (size_diff_pct + price_diff_pct) / 2, 1)
+                    prop["_is_similar_to_target"] = True
+                    similar_to_target.append(prop)
+
+            # Sort by similarity score (highest first)
+            similar_to_target.sort(key=lambda p: -p.get("_ref_similarity", 0))
+
         template = self.env.get_template("daily_report.html")
         qualifying_fav_count = sum(1 for p in favourites if p.get("_gate_status") == "qualifying")
         needs_verify_fav_count = sum(1 for p in favourites if p.get("_gate_status") == "needs-verify")
@@ -443,6 +486,8 @@ class ReportGenerator:
             opportunities=opportunities,
             favourites=favourites,
             shortlisted=shortlisted,
+            similar_to_target=similar_to_target,
+            reference_property=ref_config if ref_config.get("enabled") else None,
             area_stats=area_stats,
             config=self.config,
             is_first_import=is_first_import,
@@ -538,7 +583,8 @@ class ReportGenerator:
         emergency_target = self.config["user"].get("emergency_fund_target", 5000)
         bills = self.config.get("estimated_bills", {}).get("total_monthly", 198)
         green_ceiling = calc.monthly_target_min + bills
-        amber_ceiling = calc.monthly_target_max + bills
+        amber_ceiling = calc.monthly_target_recommended + bills
+        stretch_ceiling = calc.monthly_target_max + bills
 
         # Try deposits from minimum (keeping max emergency fund) to full savings
         # in £500 steps to find the sweet spot
@@ -562,7 +608,14 @@ class ReportGenerator:
                 ct = calc._get_ct_monthly(prop)[0]
                 all_in = mortgage + sc + gr + ct + bills
 
-            rating = "green" if all_in <= green_ceiling else ("amber" if all_in <= amber_ceiling else "red")
+            if all_in <= green_ceiling:
+                rating = "green"
+            elif all_in <= amber_ceiling:
+                rating = "amber"
+            elif all_in <= stretch_ceiling:
+                rating = "stretch"
+            else:
+                rating = "red"
             entry = {
                 "deposit": test_deposit,
                 "emergency_fund": total_savings - test_deposit,

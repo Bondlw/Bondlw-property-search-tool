@@ -978,9 +978,8 @@ function exportCSV() {
   const rows = [headers.join(',')];
   document.querySelectorAll('.property-card').forEach(card => {
     if (card.style.display === 'none') return;
-    const link = card.querySelector('.card-footer a[target="_blank"]');
-    const agentEl = card.querySelector('.card-footer span');
-    const agent = agentEl ? agentEl.textContent.split(' \u00b7 ')[0].trim() : '';
+    const url = card.dataset.url || '#';
+    const agent = card.dataset.agent || '';
     rows.push([
       card.dataset.id,
       csvField(card.dataset.address),
@@ -997,7 +996,7 @@ function exportCSV() {
       card.dataset.dom,
       card.dataset.stationWalk,
       csvField(agent),
-      link ? link.href : ''
+      url
     ].join(','));
   });
   const blob = new Blob([rows.join('\n')], {type: 'text/csv'});
@@ -1115,8 +1114,7 @@ function buildTableView() {
     const ppsf = parseInt(card.dataset.ppsf) || 0;
     const stWalk = card.dataset.stationWalk;
     const dom = card.dataset.dom || '-';
-    const link = card.querySelector('.card-footer a[target="_blank"]');
-    const url = link ? link.href : '#';
+    const url = card.dataset.url || '#';
     const trackingStatus = (s.trackings && s.trackings[id]) || 'new';
 
     const scoreClass = score >= 70 ? 'high' : score >= 50 ? 'medium' : 'low';
@@ -1124,15 +1122,143 @@ function buildTableView() {
     const sizeDisplay = sizeSqft > 0 ? sizeSqft + ' sqft' : '-';
     const ppsfDisplay = ppsf > 0 ? '\u00a3' + ppsf : '-';
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + addr + '</td><td>\u00a3' + price.toLocaleString() + '</td><td>\u00a3' + monthly + '/mo</td><td class="score-cell ' + scoreClass + '">' + score + '</td><td>' + beds + '</td><td>' + tenure + '</td><td>' + ct + '</td><td>' + epc + '</td><td>' + leaseDisplay + '</td><td>' + sizeDisplay + '</td><td>' + ppsfDisplay + '</td><td>' + (stWalk === '999' ? '-' : stWalk + 'min') + '</td><td>' + dom + 'd</td><td>' + trackingStatus.replace(/_/g, ' ') + '</td><td><a href="' + url + '" target="_blank">View</a></td>';
+    tr.dataset.propId = id;
+    tr.innerHTML = '<td class="expand-cell"><span class="expand-chevron">&#9654;</span></td><td>' + addr + '</td><td>\u00a3' + price.toLocaleString() + '</td><td>\u00a3' + monthly + '/mo</td><td class="score-cell ' + scoreClass + '">' + score + '</td><td>' + beds + '</td><td>' + tenure + '</td><td>' + ct + '</td><td>' + epc + '</td><td>' + leaseDisplay + '</td><td>' + sizeDisplay + '</td><td>' + ppsfDisplay + '</td><td>' + (stWalk === '999' ? '-' : stWalk + 'min') + '</td><td>' + dom + 'd</td><td>' + trackingStatus.replace(/_/g, ' ') + '</td><td><a href="' + url + '" target="_blank">View</a></td>';
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', function(e) {
       if (e.target.tagName === 'A') return;
-      const cardEl = document.getElementById('card-' + id);
-      if (cardEl) { document.body.classList.remove('view-table'); document.body.classList.remove('view-map'); document.getElementById('view-toggle-btn').textContent = '\u2261 Table'; document.getElementById('map-toggle-btn').textContent = '\ud83d\udccd Map'; cardEl.scrollIntoView({behavior:'smooth', block:'center'}); cardEl.style.outline = '2px solid var(--accent)'; setTimeout(function() { cardEl.style.outline = ''; }, 2000); }
+      toggleTableDetail(tr, id, card, url);
     });
     tbody.appendChild(tr);
   });
+}
+
+function toggleTableDetail(parentRow, propId, card, listingUrl) {
+  const existing = parentRow.nextElementSibling;
+  if (existing && existing.classList.contains('tbl-detail-row')) {
+    existing.remove();
+    parentRow.classList.remove('expanded');
+    return;
+  }
+  // Close any other open detail rows
+  document.querySelectorAll('.tbl-detail-row').forEach(function(r) {
+    if (r.previousElementSibling) r.previousElementSibling.classList.remove('expanded');
+    r.remove();
+  });
+  parentRow.classList.add('expanded');
+
+  // Pull data from the card DOM
+  const images = [];
+  card.querySelectorAll('.carousel-track img').forEach(function(img) { images.push(img.src); });
+  const floorPlans = [];
+  card.querySelectorAll('.floorplan-thumb').forEach(function(img) { floorPlans.push(img.src); });
+
+  const descEl = card.querySelector('.rooms-section .desc-text, .desc-text, details .rooms-section');
+  let descText = '';
+  card.querySelectorAll('details.rooms-section').forEach(function(det) {
+    const sum = det.querySelector('summary');
+    if (sum && sum.textContent.trim().toLowerCase().indexOf('description') !== -1) {
+      const descContent = det.querySelector('p, div, span');
+      if (descContent) descText = descContent.textContent.trim().substring(0, 400);
+    }
+  });
+
+  // Cost breakdown from card
+  const costBar = card.querySelector('.cost-bar-details, .cost-breakdown');
+  let costHtml = '';
+  if (card.dataset.monthly && parseInt(card.dataset.monthly) > 0) {
+    const scMonthly = Math.round(parseInt(card.dataset.sc || 0) / 12);
+    const grMonthly = Math.round(parseInt(card.dataset.gr || 0) / 12);
+    const ctMonthly = parseInt(card.dataset.ctMonthly || 0);
+    const totalMonthly = parseInt(card.dataset.monthly);
+    const mortgageEst = totalMonthly - scMonthly - grMonthly - ctMonthly - 198;
+    costHtml = '<div class="tbl-detail-costs">';
+    if (mortgageEst > 0) costHtml += '<div class="tbl-cost-item"><span class="tbl-cost-label">Mortgage</span><span class="tbl-cost-value">\u00a3' + mortgageEst + '</span></div>';
+    if (scMonthly > 0) costHtml += '<div class="tbl-cost-item"><span class="tbl-cost-label">SC</span><span class="tbl-cost-value">\u00a3' + scMonthly + '</span></div>';
+    if (grMonthly > 0) costHtml += '<div class="tbl-cost-item"><span class="tbl-cost-label">GR</span><span class="tbl-cost-value">\u00a3' + grMonthly + '</span></div>';
+    if (ctMonthly > 0) costHtml += '<div class="tbl-cost-item"><span class="tbl-cost-label">CT</span><span class="tbl-cost-value">\u00a3' + ctMonthly + '</span></div>';
+    costHtml += '<div class="tbl-cost-item"><span class="tbl-cost-label">Bills</span><span class="tbl-cost-value">\u00a3198</span></div>';
+    costHtml += '<div class="tbl-cost-item" style="font-weight:700;"><span class="tbl-cost-label">All-in</span><span class="tbl-cost-value">\u00a3' + totalMonthly + '/mo</span></div>';
+    costHtml += '</div>';
+  }
+
+  // Wage badges from card
+  let badgesHtml = '';
+  const wageBadges = card.querySelectorAll('.wage-badge, .wage-remaining');
+  if (wageBadges.length > 0) {
+    badgesHtml = '<div class="tbl-detail-badges">';
+    wageBadges.forEach(function(badge) { badgesHtml += badge.outerHTML; });
+    badgesHtml += '</div>';
+  }
+
+  // Meta tags from card
+  let metaHtml = '';
+  const tags = card.querySelectorAll('.card-meta .tag');
+  if (tags.length > 0) {
+    metaHtml = '<div class="tbl-detail-meta">';
+    tags.forEach(function(tag) { metaHtml += tag.outerHTML; });
+    metaHtml += '</div>';
+  }
+
+  // Pills (crime, station, etc.) from card
+  let pillsHtml = '';
+  const pills = card.querySelectorAll('.pills .pill');
+  if (pills.length > 0) {
+    pillsHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">';
+    pills.forEach(function(pill) { pillsHtml += pill.outerHTML; });
+    pillsHtml += '</div>';
+  }
+
+  // Gate failures from card
+  let gateHtml = '';
+  const gateFailures = card.querySelectorAll('.gate-fail-top');
+  if (gateFailures.length > 0) {
+    gateHtml = '<div style="margin-bottom:8px;">';
+    gateFailures.forEach(function(g) { gateHtml += '<div style="color:var(--red);font-size:0.7rem;">' + g.innerHTML + '</div>'; });
+    gateHtml += '</div>';
+  }
+
+  // Build image HTML
+  let imgHtml = '';
+  if (images.length > 0) {
+    imgHtml = '<div class="tbl-detail-images">';
+    imgHtml += '<img src="' + images[0] + '" alt="Property" id="tbl-main-img-' + propId + '">';
+    if (images.length > 1) {
+      imgHtml += '<div class="tbl-thumb-strip">';
+      images.slice(0, 8).forEach(function(src, idx) {
+        imgHtml += '<img src="' + src + '" alt="Photo ' + (idx + 1) + '" class="' + (idx === 0 ? 'active' : '') + '" onclick="document.getElementById(\'tbl-main-img-' + propId + '\').src=this.src; this.parentElement.querySelectorAll(\'img\').forEach(function(im){im.classList.remove(\'active\')}); this.classList.add(\'active\');">';
+      });
+      if (images.length > 8) imgHtml += '<span style="color:var(--muted);font-size:0.6rem;align-self:center;">+' + (images.length - 8) + '</span>';
+      imgHtml += '</div>';
+    }
+    if (floorPlans.length > 0) {
+      imgHtml += '<div style="margin-top:6px;"><img src="' + floorPlans[0] + '" alt="Floor plan" style="width:100%;border-radius:4px;cursor:pointer;max-height:160px;object-fit:contain;background:#fff;" onclick="openLightbox(\'' + floorPlans[0] + '\')"><span style="font-size:0.6rem;color:var(--muted);">Floor plan (click to enlarge)</span></div>';
+    }
+    imgHtml += '</div>';
+  }
+
+  // Build detail row
+  const colCount = parentRow.children.length;
+  const detailRow = document.createElement('tr');
+  detailRow.className = 'tbl-detail-row';
+  detailRow.innerHTML = '<td colspan="' + colCount + '"><div class="tbl-detail-panel">' +
+    imgHtml +
+    '<div class="tbl-detail-info">' +
+      metaHtml +
+      badgesHtml +
+      costHtml +
+      gateHtml +
+      pillsHtml +
+      (descText ? '<div class="tbl-detail-desc">' + descText + '</div>' : '') +
+      '<div class="tbl-detail-links">' +
+        '<a href="' + listingUrl + '" target="_blank" style="font-weight:600;">View on Rightmove ↗</a>' +
+        (card.querySelector('.card-address a') ? ' <a href="' + card.querySelector('.card-address a').href + '" target="_blank">Google Maps</a>' : '') +
+      '</div>' +
+    '</div>' +
+  '</div></td>';
+
+  parentRow.after(detailRow);
+  detailRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // Map view
@@ -1174,8 +1300,7 @@ function buildMapView() {
     const score = parseFloat(card.dataset.score) || 0;
     const monthly = parseInt(card.dataset.monthly) || 0;
     const beds = card.dataset.beds || '?';
-    const link = card.querySelector('.card-footer a[target="_blank"]');
-    const url = link ? link.href : '#';
+    const url = card.dataset.url || '#';
 
     const scoreColor = score >= 70 ? '#34d399' : score >= 50 ? '#fbbf24' : '#f87171';
     const marker = L.circleMarker([lat, lng], {
@@ -1228,6 +1353,11 @@ document.addEventListener('click', function(e) {
 let tableSortDir = {};
 function sortTable(col) {
   const tbody = document.getElementById('table-body');
+  // Remove any open detail rows before sorting
+  tbody.querySelectorAll('.tbl-detail-row').forEach(function(r) {
+    if (r.previousElementSibling) r.previousElementSibling.classList.remove('expanded');
+    r.remove();
+  });
   const rows = Array.from(tbody.querySelectorAll('tr'));
   const dir = tableSortDir[col] === 'asc' ? 'desc' : 'asc';
   tableSortDir[col] = dir;

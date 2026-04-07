@@ -1,15 +1,16 @@
 """Mortgage and affordability calculations.
 
 Housing-only tiers (before bills):
-  GREEN:  housing ≤30% of take-home (≤£795)
-  AMBER:  housing 30-35.8% (£795-£950) — qualifying max
-  RED:    housing >35.8% (>£950)
-  40%:    £1,060 — stretch ceiling (negotiation only)
+  GREEN:   housing ≤30% of take-home (≤£795)
+  AMBER:   housing 31-33% (£795-£874) — recommended max for single/fixed income
+  STRETCH: housing 34-36% (£874-£954) — absolute ceiling
+  RED:     housing >36% (>£954)
 
 All-in (housing + £198 bills):
-  GREEN: ≤£993/mo
-  AMBER: £993-£1,148/mo
-  RED:   >£1,148/mo
+  GREEN:  ≤£993/mo
+  AMBER:  £993-£1,072/mo
+  STRETCH: £1,072-£1,152/mo
+  RED:    >£1,152/mo
 """
 
 import math
@@ -26,6 +27,7 @@ class FinancialCalculator:
         self.rate = config["user"]["mortgage_rate"] / 100  # Convert percentage
         self.term_years = config["user"]["mortgage_term_years"]
         self.monthly_target_min = config["monthly_target"]["min"]
+        self.monthly_target_recommended = config["monthly_target"].get("recommended", 874)
         self.monthly_target_max = config["monthly_target"]["max"]
 
     def calculate_mortgage_monthly(self, property_price: int) -> float:
@@ -90,9 +92,10 @@ class FinancialCalculator:
             "council_tax_monthly": ct_monthly,
             "council_tax_estimated": ct_estimated,
             "total_monthly": round(total, 2),
-            "within_target": self.monthly_target_min <= total <= self.monthly_target_max,
+            "within_target": self.monthly_target_min <= total <= self.monthly_target_recommended,
             "under_target": total < self.monthly_target_min,
             "over_target": total > self.monthly_target_max,
+            "in_stretch": self.monthly_target_recommended < total <= self.monthly_target_max,
         }
 
     def calculate_full_monthly_cost(self, property_data: dict) -> dict:
@@ -137,15 +140,18 @@ class FinancialCalculator:
         }
 
     def get_affordability_rating(self, all_in_monthly: float) -> str:
-        """Return green/amber/red based on all-in cost (housing + bills) vs monthly targets."""
+        """Return green/amber/stretch/red based on all-in cost (housing + bills) vs monthly targets."""
         bills = self.config.get("estimated_bills", {}).get("total_monthly", 198)
         green_ceiling = self.monthly_target_min + bills
-        amber_ceiling = self.monthly_target_max + bills
+        amber_ceiling = self.monthly_target_recommended + bills
+        stretch_ceiling = self.monthly_target_max + bills
 
         if all_in_monthly <= green_ceiling:
             return "green"
         elif all_in_monthly <= amber_ceiling:
             return "amber"
+        elif all_in_monthly <= stretch_ceiling:
+            return "stretch"
         return "red"
 
     def calculate_stretch_impact(self) -> list[dict]:
@@ -342,9 +348,8 @@ class FinancialCalculator:
         tiers = {}
         for tier_name, housing_ceiling in [
             ("green", self.monthly_target_min),
-            ("amber", self.monthly_target_max),
-            ("red_35pct", round(self.take_home * 0.35)),
-            ("stretch_40pct", round(self.take_home * 0.40)),
+            ("amber", self.monthly_target_recommended),
+            ("stretch", self.monthly_target_max),
         ]:
             mortgage_budget = housing_ceiling - fixed_monthly
             if mortgage_budget <= 0:
@@ -413,9 +418,9 @@ class FinancialCalculator:
         ground_rent_pa: float = 0,
         council_tax_monthly: float | None = None,
     ) -> int:
-        """Return the maximum affordable price (AMBER ceiling) for this cost profile."""
+        """Return the maximum affordable price (STRETCH ceiling at 36%) for this cost profile."""
         result = self.calculate_max_price(service_charge_pa, ground_rent_pa, council_tax_monthly)
-        return result["tiers"]["amber"]["max_price"]
+        return result["tiers"]["stretch"]["max_price"]
 
 
 
@@ -428,38 +433,40 @@ class FinancialCalculator:
         """Calculate discount percentage and negotiation signals from property attributes.
 
         Multi-factor discount:
+          - Baseline: configurable minimum (default 5%) — reasonable offer any seller may accept
           - Days on market: 30-59d → 2%, 60-89d → 3%, 90-119d → 4%, 120-179d → 5%, 180+d → 7%
           - Short lease (<100yr): +3%, sub-120yr: +1%
           - Price history reductions: 1 cut → +2%, 2+ cuts → +3%
-        Returns (signals, discount_pct) — capped at 12%.
+        Returns (signals, discount_pct) — uses the higher of baseline or cumulative signals, capped at 12%.
         """
+        baseline_pct = self.config.get("stretch", {}).get("baseline_offer_pct", 5)
         signals: list[str] = []
-        discount_pct = 0
+        signal_discount = 0
 
         # Days on market signal
         if days_on_market and days_on_market >= 180:
             signals.append(f"Stale listing ({days_on_market}d)")
-            discount_pct += 7
+            signal_discount += 7
         elif days_on_market and days_on_market >= 120:
             signals.append(f"Long-listed ({days_on_market}d)")
-            discount_pct += 5
+            signal_discount += 5
         elif days_on_market and days_on_market >= 90:
             signals.append(f"Listed {days_on_market}d")
-            discount_pct += 4
+            signal_discount += 4
         elif days_on_market and days_on_market >= 60:
             signals.append(f"Listed {days_on_market}d")
-            discount_pct += 3
+            signal_discount += 3
         elif days_on_market and days_on_market >= 30:
             signals.append(f"Listed {days_on_market}d")
-            discount_pct += 2
+            signal_discount += 2
 
         # Short lease signal
         if lease_years and lease_years < 100:
             signals.append(f"Short lease ({lease_years}yr)")
-            discount_pct += 3
+            signal_discount += 3
         elif lease_years and lease_years < 120:
             signals.append("Sub-120yr lease")
-            discount_pct += 1
+            signal_discount += 1
 
         # Price reduction history
         reductions_count = sum(
@@ -468,10 +475,15 @@ class FinancialCalculator:
         )
         if reductions_count >= 2:
             signals.append(f"{reductions_count} price cuts")
-            discount_pct += 3
+            signal_discount += 3
         elif reductions_count == 1:
             signals.append("Price cut once")
-            discount_pct += 2
+            signal_discount += 2
+
+        # Apply baseline floor — use the higher of baseline or signal-derived discount
+        discount_pct = max(signal_discount, baseline_pct)
+        if discount_pct == baseline_pct and signal_discount < baseline_pct:
+            signals.insert(0, f"Reasonable offer ({baseline_pct}% below asking)")
 
         return signals, min(discount_pct, 12)
 
@@ -480,8 +492,10 @@ class FinancialCalculator:
     ) -> dict | None:
         """Suggest a negotiation price and analyse the financial impact.
 
-        Uses shared discount signals (DOM, lease, price history).
-        Returns None if no negotiation signals are present.
+        Uses shared discount signals (DOM, lease, price history) with a
+        configurable baseline floor (default 5%) so every property gets
+        a reasonable-offer analysis.
+        Returns None only if the property has no price or baseline is 0 with no signals.
         """
         price = property_data.get("price", 0)
         if not price:
@@ -539,7 +553,7 @@ class FinancialCalculator:
     ) -> tuple[bool, float | None]:
         """Check if a property is a stretch opportunity based on monthly cost.
 
-        Stretch = monthly housing cost > AMBER max (£950) but ≤ 40% ceiling (~£1,060).
+        Stretch = monthly housing cost > STRETCH max (£954) but ≤ 40% ceiling (~£1,060).
         """
         stretch = config.get("stretch", {})
         min_days = stretch.get("min_days_on_market", 60)

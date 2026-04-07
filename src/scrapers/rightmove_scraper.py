@@ -105,6 +105,17 @@ class RightmoveScraper(BaseScraper):
 
         return self._parse_listing_page(html, url)
 
+    def check_listing_sold(self, url: str) -> bool:
+        """Check if a listing is marked as sold STC or under offer."""
+        html = self.client.get_text(url)
+        if not html:
+            return False
+        prop_data = self._extract_page_model(html)
+        if not prop_data:
+            return False
+        tags = [t.upper() for t in (prop_data.get("tags") or [])]
+        return any(t in tags for t in ("SOLD_STC", "UNDER_OFFER"))
+
     def _parse_search_page_html(self, html: str) -> list[RawListing]:
         """Parse property cards from Rightmove search results HTML."""
         soup = BeautifulSoup(html, "html.parser")
@@ -249,6 +260,35 @@ class RightmoveScraper(BaseScraper):
 
         if not prop_data:
             logger.warning(f"No property data found on listing page: {url}")
+            return None
+
+        # Skip properties that are sold STC or under offer
+        tags = [t.upper() for t in (prop_data.get("tags") or [])]
+        if any(t in tags for t in ("SOLD_STC", "UNDER_OFFER")):
+            logger.info(f"Skipping {url} — status: {tags}")
+            return None
+
+        # Skip shared ownership / buy schemes
+        shared_ownership = prop_data.get("sharedOwnership", {})
+        if isinstance(shared_ownership, dict) and shared_ownership.get("sharedOwnershipFlag"):
+            logger.info(f"Skipping {url} — shared ownership (flag)")
+            return None
+        description_text = ""
+        text_section = prop_data.get("text", {})
+        if isinstance(text_section, dict):
+            description_text = text_section.get("description", "")
+        elif isinstance(text_section, str):
+            description_text = text_section
+        description_lower = description_text.lower()
+        shared_ownership_patterns = [
+            r"\d+%\s*share\b",
+            r"shared\s*ownership",
+            r"help\s*to\s*buy",
+            r"part\s*buy",
+            r"full\s*purchase\s*price",
+        ]
+        if any(re.search(pattern, description_lower) for pattern in shared_ownership_patterns):
+            logger.info(f"Skipping {url} — shared ownership (description match)")
             return None
 
         try:

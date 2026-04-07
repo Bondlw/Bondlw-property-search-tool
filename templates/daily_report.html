@@ -20,7 +20,7 @@
   data-epc="{{ prop.epc_rating or '' }}"
   data-ct="{{ prop.council_tax_band or '' }}"
   data-score="{{ prop._scores.total if prop._scores else 0 }}"
-  data-monthly="{{ prop._costs.total_all_in_monthly|int if prop._costs else 0 }}"
+  data-monthly="{{ (prop._offer_costs.total_all_in_monthly if prop._offer_costs else prop._costs.total_all_in_monthly)|int if prop._costs else 0 }}"
   data-price="{{ prop.price }}"
   data-dom="{{ prop._days_on_market or 0 }}"
   data-sc="{{ prop.service_charge_pa or 0 }}"
@@ -36,6 +36,8 @@
   data-lng="{{ prop._longitude or '' }}"
   data-area="{{ prop._search_area or '' }}"
   data-tracking="{{ prop._tracking_status or 'new' }}"
+  data-url="{{ prop.url }}"
+  data-agent="{{ prop.agent_name|default('')|e }}"
   data-new="{{ 'true' if prop._is_new else 'false' }}"
   data-reduced="{{ 'true' if prop._is_reduced else 'false' }}"
   id="card-{{ prop.id }}">
@@ -183,24 +185,34 @@
   {% if prop._costs %}
   <details class="cost-bar {{ prop._costs.affordability_rating }}">
     <summary>
+      {% if prop._offer_costs %}
+      <span class="total">£{{ prop._offer_costs.total_all_in_monthly|int }}/mo at offer</span>
+      <span class="pct">{{ prop._offer_costs.all_in_pct_take_home }}%</span>
+      {% else %}
       <span class="total">£{{ prop._costs.total_all_in_monthly|int }}/mo</span>
       <span class="pct">{{ prop._costs.all_in_pct_take_home }}%</span>
+      {% endif %}
+      {% set display_costs = prop._offer_costs if prop._offer_costs else prop._costs %}
       <span class="cost-breakdown-inline">
-        mtg £{{ prop._costs.mortgage_monthly|int }}
-        {% if prop._costs.service_charge_monthly > 0 %}· SC £{{ prop._costs.service_charge_monthly|int }}{% endif %}
-        {% if prop._costs.ground_rent_monthly > 0 %}· GR £{{ prop._costs.ground_rent_monthly|int }}{% endif %}
-        {% if prop._costs.council_tax_monthly > 0 %} · CT £{{ prop._costs.council_tax_monthly|int }}{% if prop._costs.council_tax_estimated %}~{% endif %}{% endif %}
+        mtg £{{ display_costs.mortgage_monthly|int }}
+        {% if display_costs.service_charge_monthly > 0 %}· SC £{{ display_costs.service_charge_monthly|int }}{% endif %}
+        {% if display_costs.ground_rent_monthly > 0 %}· GR £{{ display_costs.ground_rent_monthly|int }}{% endif %}
+        {% if display_costs.council_tax_monthly > 0 %} · CT £{{ display_costs.council_tax_monthly|int }}{% if display_costs.council_tax_estimated %}~{% endif %}{% endif %}
         · bills £{{ config.estimated_bills.total_monthly | default(198) }}
       </span>
       <span class="expand-hint">▼</span>
     </summary>
     <div class="cost-breakdown-full">
+      {% if prop._offer_costs %}
+      <div style="font-weight:600;color:var(--amber);margin-bottom:4px;font-size:0.75em;">💡 Costs shown at offer price (£{{ prop._negotiation.suggested_offer|int|default(0) }})</div>
+      {% endif %}
+      {% set c = prop._offer_costs if prop._offer_costs else prop._costs %}
       <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Housing</div>
-      <div class="cost-row"><span>Mortgage</span><span>£{{ prop._costs.mortgage_monthly|int }}/mo</span></div>
-      {% if prop._costs.service_charge_monthly > 0 %}<div class="cost-row"><span>Service charge</span><span>£{{ prop._costs.service_charge_monthly|int }}/mo</span></div>{% endif %}
-      {% if prop._costs.ground_rent_monthly > 0 %}<div class="cost-row"><span>Ground rent</span><span>£{{ prop._costs.ground_rent_monthly|int }}/mo</span></div>{% endif %}
-      {% if prop._costs.council_tax_monthly > 0 %}<div class="cost-row"><span>Council tax{% if prop._costs.council_tax_estimated %} <span style="color:var(--muted);font-size:0.7em">(est.)</span>{% endif %}</span><span>£{{ prop._costs.council_tax_monthly|int }}/mo</span></div>{% endif %}
-      <div class="cost-row cost-total"><span>Housing total</span><span>£{{ prop._costs.total_monthly|int }}/mo</span></div>
+      <div class="cost-row"><span>Mortgage</span><span>£{{ c.mortgage_monthly|int }}/mo</span></div>
+      {% if c.service_charge_monthly > 0 %}<div class="cost-row"><span>Service charge</span><span>£{{ c.service_charge_monthly|int }}/mo</span></div>{% endif %}
+      {% if c.ground_rent_monthly > 0 %}<div class="cost-row"><span>Ground rent</span><span>£{{ c.ground_rent_monthly|int }}/mo</span></div>{% endif %}
+      {% if c.council_tax_monthly > 0 %}<div class="cost-row"><span>Council tax{% if c.council_tax_estimated %} <span style="color:var(--muted);font-size:0.7em">(est.)</span>{% endif %}</span><span>£{{ c.council_tax_monthly|int }}/mo</span></div>{% endif %}
+      <div class="cost-row cost-total"><span>Housing total</span><span>£{{ c.total_monthly|int }}/mo</span></div>
 
       <div style="font-weight:600;color:var(--text);margin:4px 0 2px;">Bills</div>
       <div class="cost-row cost-row-bills"><span>Energy</span><span>~£{{ config.estimated_bills.energy_monthly | default(110) }}</span></div>
@@ -208,22 +220,22 @@
       <div class="cost-row cost-row-bills"><span>Insurance</span><span>~£{{ config.estimated_bills.insurance_monthly | default(20) }}</span></div>
       <div class="cost-row cost-row-bills"><span>Broadband</span><span>~£{{ config.estimated_bills.broadband_monthly | default(28) }}</span></div>
       <div class="cost-row cost-row-bills"><span>TV Licence</span><span>~£{{ config.estimated_bills.tv_licence_monthly | default(0) }}</span></div>
-      <div class="cost-row cost-total"><span>Housing + bills</span><span>£{{ prop._costs.total_all_in_monthly|int }}/mo</span></div>
+      <div class="cost-row cost-total"><span>Housing + bills</span><span>£{{ c.total_all_in_monthly|int }}/mo</span></div>
 
       <div style="font-weight:600;color:var(--text);margin:4px 0 2px;">Living Costs</div>
       <div class="cost-row cost-row-bills"><span>Food</span><span>~£{{ config.living_costs.food_monthly | default(250) }}</span></div>
       <div class="cost-row cost-row-bills"><span>Transport</span><span>~£{{ config.living_costs.transport_monthly | default(65) }}</span></div>
       <div class="cost-row cost-row-bills"><span>Other</span><span>~£{{ config.living_costs.other_monthly | default(25) }}</span></div>
-      <div class="cost-row cost-total"><span>True all-in</span><span>£{{ prop._costs.true_all_in_monthly|default(prop._costs.total_all_in_monthly)|int }}/mo ({{ prop._costs.true_all_in_pct_take_home|default(prop._costs.all_in_pct_take_home) }}%)</span></div>
+      <div class="cost-row cost-total"><span>True all-in</span><span>£{{ c.true_all_in_monthly|default(c.total_all_in_monthly)|int }}/mo ({{ c.true_all_in_pct_take_home|default(c.all_in_pct_take_home) }}%)</span></div>
 
       <div style="font-weight:600;color:var(--text);margin:4px 0 2px;">What's Left</div>
-      {% set true_rem = prop._costs.true_remaining_monthly|default(prop._costs.remaining_monthly) %}
+      {% set true_rem = c.true_remaining_monthly|default(c.remaining_monthly) %}
       <div class="cost-row" style="color:{% if true_rem >= 500 %}var(--green){% elif true_rem >= 200 %}var(--amber){% else %}var(--red){% endif %}">
         <span>After all costs</span><span>£{{ true_rem|int }}/mo</span>
       </div>
-      {% set sav_target = prop._costs.savings_target_monthly|default(300) %}
+      {% set sav_target = c.savings_target_monthly|default(300) %}
       <div class="cost-row cost-row-bills"><span>Savings target</span><span>−£{{ sav_target|int }}</span></div>
-      {% set after_sav = prop._costs.after_savings_monthly|default(true_rem - sav_target) %}
+      {% set after_sav = c.after_savings_monthly|default(true_rem - sav_target) %}
       <div class="cost-row" style="font-weight:600;color:{% if after_sav >= 500 %}var(--green){% elif after_sav >= 200 %}var(--amber){% else %}var(--red){% endif %}">
         <span>Disposable (fun money)</span><span>£{{ after_sav|int }}/mo</span>
       </div>
@@ -672,6 +684,12 @@
     <div class="value">{{ favourites|length }}</div>
     <div class="label">Favourites</div>
   </div>
+  {% if similar_to_target %}
+  <div class="stat" style="border-left: 3px solid var(--blue, #3b82f6);">
+    <div class="value" style="color: var(--blue, #3b82f6);">{{ similar_to_target|length }}</div>
+    <div class="label">Similar to Target</div>
+  </div>
+  {% endif %}
 </div>
 
 {# Daily Changelog #}
@@ -723,10 +741,73 @@
 </details>
 {% endif %}
 
+{# ---- Similar to Target Property Alert ---- #}
+{% if similar_to_target and reference_property %}
+<details open class="changelog-section" id="sec-similar-to-target" style="margin-bottom: 12px; background: var(--card); border-radius: 8px; padding: 12px 14px; border: 2px solid var(--blue, #3b82f6);">
+  <summary style="cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--blue, #3b82f6); list-style: none;">
+    🎯 Similar to {{ reference_property.name }} ({{ similar_to_target|length }} properties)
+    <span style="font-weight: 400; color: var(--muted); font-size: 0.75rem; margin-left: 8px;">
+      Target: {{ reference_property.size_sqft }} sqft · £{{ "{:,.0f}".format(reference_property.price) }} · ±{{ reference_property.size_tolerance_pct }}% size · ±{{ reference_property.price_tolerance_pct }}% price
+    </span>
+  </summary>
+  <div style="margin-top: 10px;">
+    <table style="width: 100%; font-size: 0.78rem; border-collapse: collapse;">
+      <thead>
+        <tr style="border-bottom: 2px solid var(--border); text-align: left;">
+          <th style="padding: 4px 8px;">Address</th>
+          <th style="padding: 4px 8px;">Price</th>
+          <th style="padding: 4px 8px;">Size</th>
+          <th style="padding: 4px 8px;">£/sqft</th>
+          <th style="padding: 4px 8px;">Status</th>
+          <th style="padding: 4px 8px;">Match</th>
+          <th style="padding: 4px 8px;">Link</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for prop in similar_to_target %}
+        <tr style="border-bottom: 1px solid var(--border); {% if prop._is_favourite %}background: rgba(234,179,8,0.08);{% elif prop._qualification_label == 'qualifies-asking' %}background: rgba(34,197,94,0.06);{% endif %}">
+          <td style="padding: 6px 8px; font-weight: 500;">
+            {{ prop.address or prop.title }}
+            {% if prop._is_favourite %}<span title="Favourite" style="color: var(--amber);">★</span>{% endif %}
+            {% if prop._is_new %}<span style="background: var(--green); color: #fff; padding: 1px 5px; border-radius: 3px; font-size: 0.68rem; font-weight: 600; margin-left: 4px;">NEW</span>{% endif %}
+          </td>
+          <td style="padding: 6px 8px;">£{{ "{:,.0f}".format(prop.price) }}</td>
+          <td style="padding: 6px 8px;">{{ prop._size_sqft }} sqft</td>
+          <td style="padding: 6px 8px;">£{{ prop._price_per_sqft }}</td>
+          <td style="padding: 6px 8px;">
+            {% if prop._qualification_label == 'qualifies-asking' %}
+              <span style="color: var(--green); font-weight: 600;">✓ Qualifies</span>
+            {% elif prop._qualification_label == 'qualifies-unverified' %}
+              <span style="color: var(--amber); font-weight: 600;">⚠ Unverified</span>
+            {% elif prop._qualification_label == 'qualifies-offer' %}
+              <span style="color: var(--blue, #3b82f6); font-weight: 600;">✓ At offer</span>
+            {% else %}
+              <span style="color: var(--muted);">{{ prop._failed_count }} gate{{ 's' if prop._failed_count != 1 }} failed</span>
+            {% endif %}
+          </td>
+          <td style="padding: 6px 8px;">
+            <span style="font-weight: 600; color: {% if prop._ref_similarity >= 90 %}var(--green){% elif prop._ref_similarity >= 75 %}var(--amber){% else %}var(--muted){% endif %};">
+              {{ prop._ref_similarity }}%
+            </span>
+          </td>
+          <td style="padding: 6px 8px;">
+            {% if prop.portal_id %}
+              <a href="https://www.rightmove.co.uk/properties/{{ prop.portal_id }}" target="_blank" rel="noopener" style="color: var(--blue, #3b82f6); text-decoration: none;">View →</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% endif %}
+
 {# Sticky navigation #}
 <nav class="nav" id="nav">
   <a href="#sec-shortlisted">Shortlisted <span class="badge-count" id="nav-shortlist-count">{{ shortlisted|length }}</span></a>
   <a href="#sec-favourites">Favourites <span class="badge-count" id="nav-fav-count">{{ favourites|length }}</span></a>
+  {% if similar_to_target %}<a href="#sec-similar-to-target" style="color: var(--blue, #3b82f6);">🎯 Similar <span class="badge-count" style="background: var(--blue, #3b82f6);">{{ similar_to_target|length }}</span></a>{% endif %}
   <a href="#sec-viewings" id="nav-viewings">Viewings <span class="badge-count" id="nav-viewings-count">0</span></a>
   <a href="#sec-offers" id="nav-offers">Offers <span class="badge-count" id="nav-offers-count">0</span></a>
   <a href="#sec-qualifying">Qualifying <span class="badge-count" id="nav-qualifying-count">{{ qualifying_count }}</span></a>
@@ -822,20 +903,21 @@
   <table>
     <thead>
       <tr>
-        <th onclick="sortTable(0)">Address</th>
-        <th onclick="sortTable(1)">Price</th>
-        <th onclick="sortTable(2)">All-in/mo</th>
-        <th onclick="sortTable(3)">Score</th>
-        <th onclick="sortTable(4)">Beds</th>
-        <th onclick="sortTable(5)">Tenure</th>
-        <th onclick="sortTable(6)">CT</th>
-        <th onclick="sortTable(7)">EPC</th>
-        <th onclick="sortTable(8)">Lease</th>
-        <th onclick="sortTable(9)">Size</th>
-        <th onclick="sortTable(10)">£/sqft</th>
-        <th onclick="sortTable(11)">Station</th>
-        <th onclick="sortTable(12)">Days</th>
-        <th onclick="sortTable(13)">Status</th>
+        <th style="width:28px;"></th>
+        <th onclick="sortTable(1)">Address</th>
+        <th onclick="sortTable(2)">Price</th>
+        <th onclick="sortTable(3)">All-in/mo</th>
+        <th onclick="sortTable(4)">Score</th>
+        <th onclick="sortTable(5)">Beds</th>
+        <th onclick="sortTable(6)">Tenure</th>
+        <th onclick="sortTable(7)">CT</th>
+        <th onclick="sortTable(8)">EPC</th>
+        <th onclick="sortTable(9)">Lease</th>
+        <th onclick="sortTable(10)">Size</th>
+        <th onclick="sortTable(11)">£/sqft</th>
+        <th onclick="sortTable(12)">Station</th>
+        <th onclick="sortTable(13)">Days</th>
+        <th onclick="sortTable(14)">Status</th>
         <th>Link</th>
       </tr>
     </thead>

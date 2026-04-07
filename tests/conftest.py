@@ -19,8 +19,8 @@ def base_config():
             "freehold": {"ideal_min": 160000, "search_max": 210000},
             "leasehold": {"ideal_min": 130000, "search_max": 210000},
         },
-        "monthly_target": {"min": 795, "max": 950},
-        "all_in_monthly_max": 1148,
+        "monthly_target": {"min": 795, "recommended": 874, "max": 954},
+        "all_in_monthly_max": 1200,
         "estimated_bills": {"total_monthly": 198},
         "living_costs": {"total_monthly": 340, "savings_target_monthly": 350},
         "council_tax_estimates": {
