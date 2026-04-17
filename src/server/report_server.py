@@ -6,10 +6,13 @@ favourite/exclude actions from the browser.
 Usage: python -m src serve [--port 8765]
 """
 
+import hashlib
+import hmac as _hmac
 import json
 import logging
 import os
 import re
+import time
 from functools import partial
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -19,6 +22,49 @@ from ..storage.database import Database
 from ..storage.repository import PropertyRepository
 
 logger = logging.getLogger(__name__)
+
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+
+_COOKIE_NAME = "auth_session"
+_THIRTY_DAYS = 30 * 24 * 60 * 60  # seconds
+_LOGIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Login — Property Search</title><style>*{{box-sizing:border-box;margin:0;padding:0}}body{{background:#0f1117;color:#e2e8f0;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}}.card{{background:#1a1f2e;border:1px solid #2d3748;border-radius:12px;padding:2rem;width:360px}}h1{{font-size:1.25rem;margin-bottom:.375rem}}p{{font-size:.875rem;color:#718096;margin-bottom:1.5rem}}input{{width:100%;padding:.75rem;background:#2d3748;border:1px solid #4a5568;border-radius:8px;color:#e2e8f0;font-size:1rem;margin-bottom:1rem}}button{{width:100%;padding:.75rem;background:#667eea;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer}}{error_style}</style></head><body><div class="card"><h1>Property Search</h1><p>Enter the access password</p>{error}<form method="POST" action="/login"><input type="password" name="password" autofocus><button>Access</button></form></div></body></html>"""
+
+
+def _sign(timestamp: int) -> str:
+    password = os.environ.get("SITE_PASSWORD", "")
+    return _hmac.new(password.encode(), str(timestamp).encode(), hashlib.sha256).hexdigest()
+
+
+def _verify_cookie(value: str | None) -> bool:
+    if not value:
+        return False
+    parts = value.split(".")
+    if len(parts) != 2:
+        return False
+    ts_str, provided_hmac = parts
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return False
+    age = time.time() - ts
+    if age < 0 or age > _THIRTY_DAYS:
+        return False
+    expected = _sign(ts)
+    try:
+        return _hmac.compare_digest(provided_hmac, expected)
+    except Exception:
+        return False
+
+
+def _parse_cookies(header: str | None) -> dict[str, str]:
+    if not header:
+        return {}
+    cookies = {}
+    for part in header.split(";"):
+        kv = part.strip().split("=", 1)
+        if len(kv) == 2:
+            cookies[kv[0].strip()] = kv[1].strip()
+    return cookies
 
 
 def get_db_path():
@@ -33,9 +79,70 @@ class ReportAPIHandler(SimpleHTTPRequestHandler):
         self.db_path = db_path
         super().__init__(*args, directory=report_dir, **kwargs)
 
+    # ── Auth check ────────────────────────────────────────────────────────────
+
+    def _is_authenticated(self) -> bool:
+        cookies = _parse_cookies(self.headers.get("Cookie"))
+        return _verify_cookie(cookies.get(_COOKIE_NAME))
+
+    def _serve_login(self, error: str = "") -> None:
+        error_style = ".error{color:#fc8181;font-size:.875rem;margin-bottom:.75rem}" if error else ""
+        error_html = f'<p class="error">{error}</p>' if error else ""
+        body = _LOGIN_HTML.format(error_style=error_style, error=error_html).encode("utf-8")
+        self.send_response(401)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_login_post(self) -> None:
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length).decode("utf-8")
+        params = dict(kv.split("=", 1) for kv in raw.split("&") if "=" in kv)
+        from urllib.parse import unquote_plus
+        password = unquote_plus(params.get("password", ""))
+        site_password = os.environ.get("SITE_PASSWORD")
+        if not site_password:
+            self._serve_login("SITE_PASSWORD not configured on server.")
+            return
+        if password == site_password:
+            ts = int(time.time())
+            sig = _sign(ts)
+            is_prod = os.environ.get("NODE_ENV") != "development"
+            secure = "; Secure" if is_prod else ""
+            cookie = f"{_COOKIE_NAME}={ts}.{sig}; Max-Age={_THIRTY_DAYS}; HttpOnly; SameSite=Strict; Path=/{secure}"
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie", cookie)
+            self.end_headers()
+        else:
+            self._serve_login("Incorrect password. Please try again.")
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/login":
+            self._serve_login()
+            return
+        if not self._is_authenticated():
+            self.send_response(302)
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return
+        super().do_GET()
+
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/login":
+            self._handle_login_post()
+            return
+
+        if not self._is_authenticated():
+            self.send_response(302)
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return
 
         # POST /api/favourite/<id>
         match = re.match(r"^/api/favourite/(\d+)$", path)
@@ -625,6 +732,9 @@ def start_server(port: int = 8765, report_dir: str = "output/reports", db_path: 
     if db_path is None:
         db_path = get_db_path()
 
+    # Prefer PORT env var (Replit), fall back to argument
+    port = int(os.environ.get("PORT", port))
+
     report_path = Path(report_dir)
     if not report_path.exists():
         report_path.mkdir(parents=True, exist_ok=True)
@@ -635,8 +745,9 @@ def start_server(port: int = 8765, report_dir: str = "output/reports", db_path: 
         db_path=db_path,
     )
 
-    server = HTTPServer(("127.0.0.1", port), handler)
-    print(f"Report server running at http://localhost:{port}")
+    # Bind to 0.0.0.0 so Replit (and other hosts) can reach the server
+    server = HTTPServer(("0.0.0.0", port), handler)
+    print(f"Report server running at http://0.0.0.0:{port}")
     print(f"Serving reports from: {report_path.resolve()}")
     print("Press Ctrl+C to stop.")
 

@@ -1,0 +1,8 @@
+run = "pip install -r requirements.txt && python -m src serve --port 3000"
+
+[deployment]
+run = ["sh", "-c", "pip install -r requirements.txt && python -m src serve --port 3000"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
