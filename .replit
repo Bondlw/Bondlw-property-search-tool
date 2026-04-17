@@ -1,7 +1,8 @@
-run = "pip install -r requirements.txt && python -m src serve --port 3000"
+run = "git pull --quiet || true && pip install -r requirements.txt && python -m src serve --port 3000"
 
 [deployment]
-run = ["sh", "-c", "pip install -r requirements.txt && python -m src serve --port 3000"]
+run = ["sh", "-c", "git pull --quiet || true && pip install -r requirements.txt && python -m src serve --port 3000"]
+visibility = "private"
 
 [[ports]]
 localPort = 3000
