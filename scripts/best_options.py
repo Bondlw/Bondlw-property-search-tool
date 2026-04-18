@@ -5,10 +5,10 @@ import math
 conn = sqlite3.connect("data/property_search.db")
 conn.row_factory = sqlite3.Row
 
-DEPOSIT = 37500
+DEPOSIT = 0        # Update to match user.deposit in search_config.yaml
 RATE = 0.045
 TERM_YEARS = 30
-TAKE_HOME = 2650
+TAKE_HOME = 0      # Update to match user.monthly_take_home in search_config.yaml
 BILLS = 198
 GREEN_MAX = 795
 AMBER_MAX = 874
